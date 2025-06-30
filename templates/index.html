@@ -1,0 +1,1236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PPE Detection Dashboard</title>
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/tailwindcss/2.2.19/tailwind.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        .status-indicator {
+            animation: pulse 2s infinite;
+        }
+        .detection-box {
+            transition: all 0.3s ease;
+        }
+        .detection-box:hover {
+            transform: scale(1.02);
+        }
+        .live-indicator {
+            animation: blink 1s infinite;
+        }
+        @keyframes blink {
+            0%, 50% { opacity: 1; }
+            51%, 100% { opacity: 0.3; }
+        }
+        .gradient-bg {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+        .frame-container {
+            position: relative;
+            overflow: hidden;
+            border-radius: 10px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.2);
+        }
+        
+        /* Ensure proper scrolling for page and modals */
+        html, body {
+            height: 100%;
+            overflow: auto !important;
+            scroll-behavior: smooth;
+        }
+        
+        /* Custom scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 12px;
+            height: 12px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 6px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 6px;
+            border: 2px solid #f1f1f1;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a1a1a1;
+        }
+        
+        /* Modal specific scrolling */
+        .modal-content {
+            scroll-behavior: smooth;
+            scrollbar-width: thin;
+            scrollbar-color: #c1c1c1 #f1f1f1;
+        }
+        
+        /* Add shadow when content is scrollable */
+        .modal-content::-webkit-scrollbar-track {
+            box-shadow: inset 0 0 5px rgba(0,0,0,0.1);
+        }
+        
+        /* Ensure modal content is scrollable on mobile */
+        @media (max-width: 640px) {
+            .modal-content {
+                max-height: 80vh;
+                -webkit-overflow-scrolling: touch;
+            }
+        }
+        
+        /* Visual indicator for scrollable content */
+        .modal-content {
+            position: relative;
+        }
+        
+        .modal-content::after {
+            content: '';
+            position: sticky;
+            bottom: 0;
+            display: block;
+            height: 20px;
+            background: linear-gradient(transparent, rgba(255,255,255,0.8));
+            pointer-events: none;
+            margin: 0 -24px -24px -24px;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+
+        // Main Dashboard Component
+        function PPEDashboard() {
+            const [systemStatus, setSystemStatus] = useState({
+                running: false,
+                stats: { frames_processed: 0, fps: 0, connection_status: 'Disconnected' },
+                detections: { people: [], ppe_items: [], compliance_status: 'UNKNOWN' }
+            });
+            const [currentFrame, setCurrentFrame] = useState(null);
+            const [logs, setLogs] = useState([]);
+            const [config, setConfig] = useState(null);
+            const [unknownPeople, setUnknownPeople] = useState([]);
+            const [showAddPersonModal, setShowAddPersonModal] = useState(false);
+            const [selectedUnknown, setSelectedUnknown] = useState(null);
+            const [showSettingsModal, setShowSettingsModal] = useState(false);
+            const socketRef = useRef(null);
+
+            useEffect(() => {
+                // Initialize Socket.IO connection
+                socketRef.current = io();
+                
+                socketRef.current.on('connect', () => {
+                    console.log('Connected to server');
+                });
+
+                socketRef.current.on('detection_update', (data) => {
+                    setCurrentFrame(data.frame);
+                    setSystemStatus({
+                        running: true,
+                        stats: data.stats,
+                        detections: data.detections
+                    });
+                    
+                    // Check if there are new unknown people detections
+                    if (data.detections.people && data.detections.people.some(p => p.name === 'Unknown Person')) {
+                        fetchUnknownPeople();
+                    }
+                });
+
+                socketRef.current.on('status_update', (data) => {
+                    setSystemStatus(prev => ({
+                        ...prev,
+                        running: data.running,
+                        stats: data.stats
+                    }));
+                });
+
+                // Fetch initial data
+                fetchStatus();
+                fetchConfig();
+                fetchLogs();
+                fetchUnknownPeople();
+
+                return () => {
+                    if (socketRef.current) {
+                        socketRef.current.disconnect();
+                    }
+                };
+            }, []);
+
+            const fetchStatus = async () => {
+                try {
+                    const response = await fetch('/api/status');
+                    const data = await response.json();
+                    setSystemStatus(data);
+                } catch (error) {
+                    console.error('Error fetching status:', error);
+                }
+            };
+
+            const fetchConfig = async () => {
+                try {
+                    const response = await fetch('/api/config');
+                    const data = await response.json();
+                    setConfig(data);
+                } catch (error) {
+                    console.error('Error fetching config:', error);
+                }
+            };
+
+            const fetchLogs = async () => {
+                try {
+                    const response = await fetch('/api/logs');
+                    const data = await response.json();
+                    setLogs(data);
+                } catch (error) {
+                    console.error('Error fetching logs:', error);
+                }
+            };
+
+            const fetchUnknownPeople = async () => {
+                try {
+                    const response = await fetch('/api/unknown-people');
+                    const data = await response.json();
+                    setUnknownPeople(data);
+                } catch (error) {
+                    console.error('Error fetching unknown people:', error);
+                }
+            };
+
+            const addPersonToDatabase = async (unknownId, name) => {
+                try {
+                    const response = await fetch('/api/add-person', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ unknown_id: unknownId, name: name })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        alert(data.message);
+                        fetchUnknownPeople();
+                        setShowAddPersonModal(false);
+                        setSelectedUnknown(null);
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error adding person:', error);
+                    alert('Error adding person to database');
+                }
+            };
+
+            const dismissUnknownPerson = async (unknownId) => {
+                try {
+                    const response = await fetch(`/api/dismiss-unknown/${unknownId}`, {
+                        method: 'DELETE'
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        fetchUnknownPeople();
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error dismissing unknown person:', error);
+                }
+            };
+
+            const updateDetectionSettings = async (settings) => {
+                try {
+                    const response = await fetch('/api/config/detection', {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify(settings)
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        fetchConfig(); // Refresh config
+                        return { success: true, message: data.message };
+                    } else {
+                        return { success: false, message: data.message };
+                    }
+                } catch (error) {
+                    console.error('Error updating settings:', error);
+                    return { success: false, message: 'Failed to update settings' };
+                }
+            };
+
+            const startSystem = async () => {
+                try {
+                    const response = await fetch('/api/start', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) {
+                        fetchStatus();
+                    }
+                } catch (error) {
+                    console.error('Error starting system:', error);
+                }
+            };
+
+            const stopSystem = async () => {
+                try {
+                    const response = await fetch('/api/stop', { method: 'POST' });
+                    const data = await response.json();
+                    if (data.success) {
+                        fetchStatus();
+                        setCurrentFrame(null);
+                    }
+                } catch (error) {
+                    console.error('Error stopping system:', error);
+                }
+            };
+
+            return (
+                <div className="min-h-screen bg-gray-100">
+                    {/* Header */}
+                    <header className="gradient-bg text-white shadow-lg">
+                        <div className="container mx-auto px-6 py-4">
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center space-x-4">
+                                    <i className="fas fa-hard-hat text-3xl"></i>
+                                    <div>
+                                        <h1 className="text-2xl font-bold">PPE Detection System</h1>
+                                        <p className="text-blue-200">Real-time Safety Monitoring</p>
+                                    </div>
+                                </div>
+                                <div className="flex items-center space-x-4">
+                                    <SystemStatusIndicator status={systemStatus} />
+                                    <button 
+                                        onClick={() => setShowSettingsModal(true)}
+                                        className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+                                        title="Detection Settings"
+                                    >
+                                        <i className="fas fa-cog"></i>
+                                        <span>Settings</span>
+                                    </button>
+                                    <SystemControls 
+                                        running={systemStatus.running}
+                                        onStart={startSystem}
+                                        onStop={stopSystem}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+                    </header>
+
+                    {/* Main Content */}
+                    <div className="container mx-auto px-6 py-8">
+                        <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                            {/* Live Feed */}
+                            <div className="lg:col-span-2">
+                                <LiveFeed frame={currentFrame} running={systemStatus.running} />
+                            </div>
+
+                            {/* Detection Results */}
+                            <div className="space-y-6">
+                                <DetectionResults detections={systemStatus.detections} />
+                                <SystemStats stats={systemStatus.stats} />
+                            </div>
+                        </div>
+
+                        {/* Bottom Section */}
+                        <div className="mt-8 space-y-8">
+                            {/* Unknown People Section */}
+                            <UnknownPeopleManager 
+                                unknownPeople={unknownPeople}
+                                enabled={config?.detection?.detect_unknown_people ?? true}
+                                onAddPerson={(unknown) => {
+                                    setSelectedUnknown(unknown);
+                                    setShowAddPersonModal(true);
+                                }}
+                                onDismiss={dismissUnknownPerson}
+                                onSettings={() => setShowSettingsModal(true)}
+                            />
+                            
+                            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                                <ConfigDisplay config={config} />
+                                <LogsDisplay logs={logs} onRefresh={fetchLogs} />
+                            </div>
+                        </div>
+                        
+                        {/* Add Person Modal */}
+                        {showAddPersonModal && selectedUnknown && (
+                            <AddPersonModal 
+                                unknown={selectedUnknown}
+                                onAdd={(name) => addPersonToDatabase(selectedUnknown.id, name)}
+                                onClose={() => {
+                                    setShowAddPersonModal(false);
+                                    setSelectedUnknown(null);
+                                }}
+                            />
+                        )}
+                        
+                        {/* Settings Modal */}
+                        {showSettingsModal && config && (
+                            <SettingsModal 
+                                config={config}
+                                onUpdate={updateDetectionSettings}
+                                onClose={() => setShowSettingsModal(false)}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // System Status Indicator Component
+        function SystemStatusIndicator({ status }) {
+            const getStatusColor = () => {
+                if (!status.running) return 'bg-gray-500';
+                if (status.stats.connection_status === 'Connected') return 'bg-green-500';
+                if (status.stats.connection_status === 'Failed') return 'bg-red-500';
+                return 'bg-yellow-500';
+            };
+
+            const getStatusText = () => {
+                if (!status.running) return 'Stopped';
+                return status.stats.connection_status || 'Unknown';
+            };
+
+            return (
+                <div className="flex items-center space-x-2">
+                    <div className={`w-3 h-3 rounded-full ${getStatusColor()} ${status.running ? 'status-indicator' : ''}`}></div>
+                    <span className="text-sm font-medium">{getStatusText()}</span>
+                </div>
+            );
+        }
+
+        // System Controls Component
+        function SystemControls({ running, onStart, onStop }) {
+            return (
+                <div className="flex space-x-2">
+                    {!running ? (
+                        <button 
+                            onClick={onStart}
+                            className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+                        >
+                            <i className="fas fa-play"></i>
+                            <span>Start</span>
+                        </button>
+                    ) : (
+                        <button 
+                            onClick={onStop}
+                            className="bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+                        >
+                            <i className="fas fa-stop"></i>
+                            <span>Stop</span>
+                        </button>
+                    )}
+                </div>
+            );
+        }
+
+        // Live Feed Component
+        function LiveFeed({ frame, running }) {
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h2 className="text-xl font-bold text-gray-800">Live Camera Feed</h2>
+                        {running && (
+                            <div className="flex items-center space-x-2">
+                                <div className="w-2 h-2 bg-red-500 rounded-full live-indicator"></div>
+                                <span className="text-sm text-red-600 font-medium">LIVE</span>
+                            </div>
+                        )}
+                    </div>
+                    <div className="frame-container bg-gray-900">
+                        {frame ? (
+                            <img 
+                                src={`data:image/jpeg;base64,${frame}`} 
+                                alt="Live Feed"
+                                className="w-full h-auto max-h-96 object-contain"
+                            />
+                        ) : (
+                            <div className="flex items-center justify-center h-96 text-gray-500">
+                                <div className="text-center">
+                                    <i className="fas fa-video-slash text-6xl mb-4"></i>
+                                    <p className="text-lg">
+                                        {running ? 'Connecting to camera...' : 'Start system to view live feed'}
+                                    </p>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Detection Results Component
+        function DetectionResults({ detections }) {
+            const getComplianceColor = (status) => {
+                switch (status) {
+                    case 'COMPLIANT': return 'text-green-600 bg-green-100';
+                    case 'NON-COMPLIANT': return 'text-red-600 bg-red-100';
+                    default: return 'text-gray-600 bg-gray-100';
+                }
+            };
+
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">Detection Results</h3>
+                    
+                    {/* Compliance Status */}
+                    <div className={`p-3 rounded-lg mb-4 ${getComplianceColor(detections.compliance_status)}`}>
+                        <div className="flex items-center justify-between">
+                            <span className="font-medium">Status:</span>
+                            <span className="font-bold">{detections.compliance_status}</span>
+                        </div>
+                        {detections.compliance_details && (
+                            <div className="text-sm mt-2">
+                                Compliance: {detections.compliance_details.compliance_percentage?.toFixed(1)}%
+                            </div>
+                        )}
+                    </div>
+
+                    {/* People Detected */}
+                    <div className="mb-4">
+                        <h4 className="font-medium text-gray-700 mb-2">People Detected ({detections.people?.length || 0})</h4>
+                        <div className="space-y-2">
+                            {detections.people?.map((person, index) => (
+                                <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
+                                    <span className="text-sm">{person.name}</span>
+                                    <span className="text-xs text-gray-500">ID: {index + 1}</span>
+                                </div>
+                            )) || <p className="text-gray-500 text-sm">No people detected</p>}
+                        </div>
+                    </div>
+
+                    {/* PPE Items */}
+                    <div>
+                        <h4 className="font-medium text-gray-700 mb-2">PPE Items ({detections.ppe_items?.length || 0})</h4>
+                        <div className="space-y-2">
+                            {detections.ppe_items?.map((item, index) => (
+                                <div key={index} className={`flex items-center justify-between p-2 rounded ${item.required ? 'bg-green-50' : 'bg-gray-50'}`}>
+                                    <span className="text-sm">{item.label}</span>
+                                    <div className="flex items-center space-x-2">
+                                        <span className="text-xs text-gray-500">{(item.confidence * 100).toFixed(1)}%</span>
+                                        {item.required && <i className="fas fa-check-circle text-green-500"></i>}
+                                    </div>
+                                </div>
+                            )) || <p className="text-gray-500 text-sm">No PPE detected</p>}
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // System Stats Component
+        function SystemStats({ stats }) {
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">System Statistics</h3>
+                    <div className="space-y-3">
+                        <div className="flex justify-between">
+                            <span className="text-gray-600">Frames Processed:</span>
+                            <span className="font-medium">{stats.frames_processed?.toLocaleString() || 0}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-600">Current FPS:</span>
+                            <span className="font-medium">{stats.fps?.toFixed(1) || '0.0'}</span>
+                        </div>
+                        <div className="flex justify-between">
+                            <span className="text-gray-600">Connection:</span>
+                            <span className={`font-medium ${stats.connection_status === 'Connected' ? 'text-green-600' : 'text-red-600'}`}>
+                                {stats.connection_status || 'Unknown'}
+                            </span>
+                        </div>
+                        {stats.start_time && (
+                            <div className="flex justify-between">
+                                <span className="text-gray-600">Started:</span>
+                                <span className="font-medium text-sm">{new Date(stats.start_time).toLocaleTimeString()}</span>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Config Display Component
+        function ConfigDisplay({ config }) {
+            if (!config) return null;
+
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                    <h3 className="text-lg font-bold text-gray-800 mb-4">System Configuration</h3>
+                    <div className="space-y-4">
+                        <div>
+                            <h4 className="font-medium text-gray-700 mb-2">Camera Settings</h4>
+                            <div className="text-sm space-y-1 text-gray-600">
+                                <p>IP: {config.camera?.ip}</p>
+                                <p>Port: {config.camera?.port}</p>
+                                <p>Stream: {config.camera?.stream_path}</p>
+                            </div>
+                        </div>
+                        <div>
+                            <h4 className="font-medium text-gray-700 mb-2">Detection Settings</h4>
+                            <div className="text-sm space-y-1 text-gray-600">
+                                <p>YOLO Confidence: {config.detection?.yolo_confidence}</p>
+                                <p>Face Tolerance: {config.detection?.face_tolerance}</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Logs Display Component
+        function LogsDisplay({ logs, onRefresh }) {
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6">
+                    <div className="flex items-center justify-between mb-4">
+                        <h3 className="text-lg font-bold text-gray-800">Recent Logs</h3>
+                        <button 
+                            onClick={onRefresh}
+                            className="text-blue-600 hover:text-blue-800 text-sm"
+                        >
+                            <i className="fas fa-refresh mr-1"></i>
+                            Refresh
+                        </button>
+                    </div>
+                    <div className="max-h-64 overflow-y-auto space-y-2">
+                        {logs.map((log, index) => (
+                            <div key={index} className="text-sm p-2 bg-gray-50 rounded">
+                                <div className="flex justify-between items-start mb-1">
+                                    <span className="font-medium">{log.people_detected || 'No people'}</span>
+                                    <span className={`px-2 py-1 rounded text-xs ${log.ppe_status === 'COMPLIANT' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
+                                        {log.ppe_status}
+                                    </span>
+                                </div>
+                                <div className="text-xs text-gray-500">
+                                    {new Date(log.timestamp).toLocaleString()}
+                                </div>
+                            </div>
+                        )) || <p className="text-gray-500 text-sm">No logs available</p>}
+                    </div>
+                </div>
+            );
+        }
+
+        // Unknown People Manager Component
+        function UnknownPeopleManager({ unknownPeople, enabled, onAddPerson, onDismiss, onSettings }) {
+            const pendingPeople = unknownPeople.filter(p => !p.added_to_database);
+            
+            // Don't show anything if disabled and no pending people
+            if (!enabled && pendingPeople.length === 0) {
+                return null;
+            }
+            
+            if (pendingPeople.length === 0) return null;
+
+            return (
+                <div className="bg-white rounded-xl shadow-lg p-6 border-l-4 border-orange-500">
+                    <div className="flex items-center justify-between mb-4">
+                        <div className="flex items-center space-x-3">
+                            <i className="fas fa-user-question text-2xl text-orange-600"></i>
+                            <div>
+                                <h3 className="text-lg font-bold text-gray-800">Unknown People Detected</h3>
+                                <p className="text-sm text-gray-600">{pendingPeople.length} new unknown person(s) detected</p>
+                                {!enabled && (
+                                    <p className="text-sm text-amber-600 font-medium">
+                                        <i className="fas fa-pause-circle mr-1"></i>
+                                        Detection currently disabled
+                                    </p>
+                                )}
+                            </div>
+                        </div>
+                        <div className="flex items-center space-x-3">
+                            {!enabled && (
+                                <button 
+                                    onClick={onSettings}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-1 rounded text-sm font-medium transition-colors"
+                                >
+                                    <i className="fas fa-cog mr-1"></i>
+                                    Enable Detection
+                                </button>
+                            )}
+                            <div className="bg-orange-100 text-orange-800 px-3 py-1 rounded-full text-sm font-medium">
+                                Needs Attention
+                            </div>
+                        </div>
+                    </div>
+                    
+                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+                        {pendingPeople.map((person) => (
+                            <div key={person.id} className="bg-gray-50 rounded-lg p-4 hover:bg-gray-100 transition-colors">
+                                <div className="aspect-square mb-3 rounded-lg overflow-hidden bg-gray-200">
+                                    <img 
+                                        src={`data:image/jpeg;base64,${person.image_data}`}
+                                        alt="Unknown Person"
+                                        className="w-full h-full object-cover"
+                                    />
+                                </div>
+                                
+                                <div className="text-sm space-y-2">
+                                    <p className="text-gray-600">
+                                        <strong>First Seen:</strong><br />
+                                        {new Date(person.timestamp).toLocaleString()}
+                                    </p>
+                                    <p className="text-gray-600">
+                                        <strong>Last Seen:</strong><br />
+                                        {new Date(person.last_seen).toLocaleString()}
+                                    </p>
+                                </div>
+                                
+                                <div className="flex space-x-2 mt-4">
+                                    <button 
+                                        onClick={() => onAddPerson(person)}
+                                        className="flex-1 bg-green-600 hover:bg-green-700 text-white px-3 py-2 rounded text-sm font-medium transition-colors"
+                                    >
+                                        <i className="fas fa-user-plus mr-1"></i>
+                                        Add Person
+                                    </button>
+                                    <button 
+                                        onClick={() => onDismiss(person.id)}
+                                        className="bg-gray-500 hover:bg-gray-600 text-white px-3 py-2 rounded text-sm transition-colors"
+                                        title="Dismiss"
+                                    >
+                                        <i className="fas fa-times"></i>
+                                    </button>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            );
+        }
+
+        // Settings Modal Component
+        function SettingsModal({ config, onUpdate, onClose }) {
+            const [activeTab, setActiveTab] = useState('detection');
+            const [settings, setSettings] = useState({
+                detect_unknown_people: config.detection.detect_unknown_people || true,
+                detect_ppe: config.detection.detect_ppe !== undefined ? config.detection.detect_ppe : true,
+                unknown_detection_cooldown: config.detection.unknown_detection_cooldown || 30,
+                yolo_confidence: config.detection.yolo_confidence || 0.5,
+                face_tolerance: config.detection.face_tolerance || 0.6,
+                detection_interval: config.camera.detection_interval || 1,
+                use_low_resolution: config.camera.use_low_resolution || false
+            });
+            const [saving, setSaving] = useState(false);
+            const [isControlling, setIsControlling] = useState(false);
+
+            const tabs = [
+                { id: 'detection', name: 'Detection', icon: '🎯' },
+                { id: 'performance', name: 'Performance', icon: '⚡' },
+                { id: 'camera', name: 'Camera Controls', icon: '📹' },
+                { id: 'advanced', name: 'Advanced', icon: '⚙️' }
+            ];
+
+            const handleSave = async () => {
+                setSaving(true);
+                try {
+                    const result = await onUpdate(settings);
+                    if (result.success) {
+                        alert('Settings updated successfully!');
+                        onClose();
+                    } else {
+                        alert('Error: ' + result.message);
+                    }
+                } catch (error) {
+                    alert('Failed to save settings');
+                } finally {
+                    setSaving(false);
+                }
+            };
+
+            const handleReset = () => {
+                setSettings({
+                    detect_unknown_people: config.detection.detect_unknown_people || true,
+                    detect_ppe: config.detection.detect_ppe !== undefined ? config.detection.detect_ppe : true,
+                    unknown_detection_cooldown: config.detection.unknown_detection_cooldown || 30,
+                    yolo_confidence: config.detection.yolo_confidence || 0.5,
+                    face_tolerance: config.detection.face_tolerance || 0.6,
+                    detection_interval: config.camera.detection_interval || 1,
+                    use_low_resolution: config.camera.use_low_resolution || false
+                });
+            };
+
+            const sendCameraCommand = async (action, params = {}) => {
+                setIsControlling(true);
+                try {
+                    const response = await fetch('/api/camera/control', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ action, params })
+                    });
+                    const data = await response.json();
+                    
+                    if (!data.success) {
+                        alert('Camera control error: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Camera control error:', error);
+                    alert('Failed to control camera');
+                } finally {
+                    setIsControlling(false);
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col modal-content shadow-2xl">
+                        
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
+                            <h3 className="text-xl font-bold text-gray-800">System Settings</h3>
+                            <button 
+                                onClick={onClose}
+                                className="text-gray-500 hover:text-gray-700 transition-colors"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {/* Tab Navigation */}
+                        <div className="flex border-b border-gray-200 flex-shrink-0">
+                            {tabs.map(tab => (
+                                <button
+                                    key={tab.id}
+                                    onClick={() => setActiveTab(tab.id)}
+                                    className={`flex-1 px-4 py-3 text-sm font-medium text-center border-b-2 transition-colors ${ 
+                                        activeTab === tab.id 
+                                        ? 'border-blue-500 text-blue-600 bg-blue-50' 
+                                        : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                                    }`}
+                                >
+                                    <span className="mr-2">{tab.icon}</span>
+                                    {tab.name}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Scrollable Content */}
+                        <div className="flex-1 overflow-y-auto p-6">
+                            
+                            {/* Detection Tab */}
+                            {activeTab === 'detection' && (
+                                <div className="space-y-6">
+                            {/* Unknown Person Detection */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                    <i className="fas fa-user-question text-orange-600 mr-2"></i>
+                                    Unknown Person Detection
+                                </h4>
+                                
+                                <div className="flex items-center justify-between mb-4">
+                                    <div>
+                                        <p className="text-sm text-gray-600">
+                                            Automatically detect and capture unknown people for database addition
+                                        </p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input 
+                                            type="checkbox"
+                                            checked={settings.detect_unknown_people}
+                                            onChange={(e) => setSettings({...settings, detect_unknown_people: e.target.checked})}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                    </label>
+                                </div>
+                                
+                                {settings.detect_unknown_people && (
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Detection Cooldown: {settings.unknown_detection_cooldown} seconds
+                                        </label>
+                                        <input 
+                                            type="range"
+                                            min="5"
+                                            max="120"
+                                            step="5"
+                                            value={settings.unknown_detection_cooldown}
+                                            onChange={(e) => setSettings({...settings, unknown_detection_cooldown: parseInt(e.target.value)})}
+                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                            <span>5s</span>
+                                            <span>2min</span>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* PPE Detection Settings */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                    <i className="fas fa-hard-hat text-green-600 mr-2"></i>
+                                    PPE Detection Settings
+                                </h4>
+                                
+                                <div className="flex items-center justify-between mb-4">
+                                    <div>
+                                        <p className="text-sm text-gray-600">
+                                            Enable PPE detection (disable for face-only mode)
+                                        </p>
+                                    </div>
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input 
+                                            type="checkbox"
+                                            checked={settings.detect_ppe}
+                                            onChange={(e) => setSettings({...settings, detect_ppe: e.target.checked})}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                    </label>
+                                </div>
+                                
+                                {settings.detect_ppe && (
+                                    <div className="space-y-4">
+                                        <div>
+                                            <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                YOLO Confidence Threshold: {(settings.yolo_confidence * 100).toFixed(0)}%
+                                            </label>
+                                            <input 
+                                                type="range"
+                                                min="0.1"
+                                                max="1.0"
+                                                step="0.05"
+                                                value={settings.yolo_confidence}
+                                                onChange={(e) => setSettings({...settings, yolo_confidence: parseFloat(e.target.value)})}
+                                                className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                            />
+                                            <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                                <span>10% (More detections)</span>
+                                                <span>100% (Fewer, more confident)</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Face Recognition Settings */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                    <i className="fas fa-face-smile text-purple-600 mr-2"></i>
+                                    Face Recognition Settings
+                                </h4>
+                                
+                                <div>
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Face Tolerance: {(settings.face_tolerance * 100).toFixed(0)}%
+                                    </label>
+                                    <input 
+                                        type="range"
+                                        min="0.1"
+                                        max="1.0"
+                                        step="0.05"
+                                        value={settings.face_tolerance}
+                                        onChange={(e) => setSettings({...settings, face_tolerance: parseFloat(e.target.value)})}
+                                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                    />
+                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                        <span>10% (Strict matching)</span>
+                                        <span>100% (Loose matching)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {/* Performance Settings */}
+                            <div className="bg-gray-50 p-4 rounded-lg">
+                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                    <i className="fas fa-tachometer-alt text-red-600 mr-2"></i>
+                                    Performance Optimization
+                                </h4>
+                                
+                                <div className="space-y-4">
+                                    <div className="flex items-center justify-between">
+                                        <div>
+                                            <p className="text-sm font-medium text-gray-700">Use Lower Resolution Stream</p>
+                                            <p className="text-xs text-gray-500">Better performance, lower quality</p>
+                                        </div>
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input 
+                                                type="checkbox"
+                                                checked={settings.use_low_resolution}
+                                                onChange={(e) => setSettings({...settings, use_low_resolution: e.target.checked})}
+                                                className="sr-only peer"
+                                            />
+                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                        </label>
+                                    </div>
+                                    
+                                    <div>
+                                        <label className="block text-sm font-medium text-gray-700 mb-2">
+                                            Detection Interval: Process every {settings.detection_interval} frame(s)
+                                        </label>
+                                        <input 
+                                            type="range"
+                                            min="1"
+                                            max="5"
+                                            step="1"
+                                            value={settings.detection_interval}
+                                            onChange={(e) => setSettings({...settings, detection_interval: parseInt(e.target.value)})}
+                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                        />
+                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                            <span>Every frame (slower)</span>
+                                            <span>Every 5th frame (faster)</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                                    {/* Current PPE Requirements */}
+                                    <div className="bg-blue-50 p-4 rounded-lg">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-list-check text-blue-600 mr-2"></i>
+                                            Required PPE Items
+                                        </h4>
+                                        <div className="flex flex-wrap gap-2">
+                                            {config.detection.required_ppe.map((item, index) => (
+                                                <span key={index} className="bg-blue-100 text-blue-800 px-3 py-1 rounded-full text-sm font-medium">
+                                                    {item}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Performance Tab */}
+                            {activeTab === 'performance' && (
+                                <div className="space-y-6">
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-tachometer-alt text-red-600 mr-2"></i>
+                                            Performance Optimization
+                                        </h4>
+                                        
+                                        <div className="space-y-4">
+                                            <div className="flex items-center justify-between">
+                                                <div>
+                                                    <p className="text-sm font-medium text-gray-700">Use Lower Resolution Stream</p>
+                                                    <p className="text-xs text-gray-500">Better performance, lower quality</p>
+                                                </div>
+                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                    <input 
+                                                        type="checkbox"
+                                                        checked={settings.use_low_resolution}
+                                                        onChange={(e) => setSettings({...settings, use_low_resolution: e.target.checked})}
+                                                        className="sr-only peer"
+                                                    />
+                                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                                </label>
+                                            </div>
+                                            
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    Detection Interval: Process every {settings.detection_interval} frame(s)
+                                                </label>
+                                                <input 
+                                                    type="range"
+                                                    min="1"
+                                                    max="5"
+                                                    step="1"
+                                                    value={settings.detection_interval}
+                                                    onChange={(e) => setSettings({...settings, detection_interval: parseInt(e.target.value)})}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                                />
+                                                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                                    <span>Every frame (slower)</span>
+                                                    <span>Every 5th frame (faster)</span>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Camera Controls Tab */}
+                            {activeTab === 'camera' && (
+                                <div className="space-y-6">
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-video text-blue-600 mr-2"></i>
+                                            PTZ Camera Controls
+                                        </h4>
+                                        
+                                        {/* Pan/Tilt Grid */}
+                                        <div className="mb-6">
+                                            <h5 className="font-medium text-gray-700 mb-3">Pan & Tilt</h5>
+                                            <div className="grid grid-cols-3 gap-2 max-w-32 mx-auto">
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↖">↖</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↑">↑</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↗">↗</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="←">←</button>
+                                                <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="Home">🏠</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="→">→</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↙">↙</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↓">↓</button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↘">↘</button>
+                                            </div>
+                                        </div>
+
+                                        {/* Zoom Controls */}
+                                        <div className="mb-6">
+                                            <h5 className="font-medium text-gray-700 mb-3">Zoom</h5>
+                                            <div className="flex space-x-2 justify-center">
+                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'in'})} disabled={isControlling} className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-4 py-2 rounded">🔍+ Zoom In</button>
+                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'out'})} disabled={isControlling} className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-4 py-2 rounded">🔍- Zoom Out</button>
+                                            </div>
+                                        </div>
+
+                                        {/* Preset Controls */}
+                                        <div>
+                                            <h5 className="font-medium text-gray-700 mb-3">Presets</h5>
+                                            <div className="space-y-2">
+                                                <div className="flex space-x-2">
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 1})} disabled={isControlling} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">💾 Save Pos 1</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">📍 Go Pos 1</button>
+                                                </div>
+                                                <div className="flex space-x-2">
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 2})} disabled={isControlling} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">💾 Save Pos 2</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 2})} disabled={isControlling} className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">📍 Go Pos 2</button>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Advanced Tab */}
+                            {activeTab === 'advanced' && (
+                                <div className="space-y-6">
+                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-cogs text-gray-600 mr-2"></i>
+                                            Advanced Configuration
+                                        </h4>
+                                        <p className="text-sm text-gray-600 mb-4">
+                                            Additional system settings and diagnostics will be available here in future updates.
+                                        </p>
+                                        <div className="bg-blue-50 p-3 rounded border-l-4 border-blue-400">
+                                            <p className="text-sm text-blue-700">
+                                                <i className="fas fa-info-circle mr-1"></i>
+                                                Coming soon: Network diagnostics, backup/restore, and advanced detection algorithms.
+                                            </p>
+                                        </div>
+                                    </div>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Footer Buttons */}
+                        <div className="flex space-x-3 mt-6 pt-4 border-t flex-shrink-0">
+                            <button 
+                                type="button"
+                                onClick={handleReset}
+                                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+                            >
+                                Reset
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={onClose}
+                                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 px-4 rounded-lg transition-colors"
+                            >
+                                Cancel
+                            </button>
+                            <button 
+                                type="button"
+                                onClick={handleSave}
+                                disabled={saving}
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-2 px-4 rounded-lg transition-colors"
+                            >
+                                {saving ? 'Saving...' : 'Save Changes'}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Add Person Modal Component
+        function AddPersonModal({ unknown, onAdd, onClose }) {
+            const [name, setName] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (name.trim()) {
+                    onAdd(name.trim());
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl max-w-md w-full p-6 modal-content">
+                        <div className="flex items-center justify-between mb-4">
+                            <h3 className="text-lg font-bold text-gray-800">Add New Person</h3>
+                            <button 
+                                onClick={onClose}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+                        
+                        <div className="mb-4">
+                            <div className="aspect-square w-32 mx-auto rounded-lg overflow-hidden bg-gray-200 mb-4">
+                                <img 
+                                    src={`data:image/jpeg;base64,${unknown.image_data}`}
+                                    alt="Unknown Person"
+                                    className="w-full h-full object-cover"
+                                />
+                            </div>
+                            <p className="text-sm text-gray-600 text-center">
+                                First detected: {new Date(unknown.timestamp).toLocaleString()}
+                            </p>
+                        </div>
+                        
+                        <form onSubmit={handleSubmit}>
+                            <div className="mb-4">
+                                <label htmlFor="personName" className="block text-sm font-medium text-gray-700 mb-2">
+                                    Person's Name
+                                </label>
+                                <input 
+                                    type="text"
+                                    id="personName"
+                                    value={name}
+                                    onChange={(e) => setName(e.target.value)}
+                                    placeholder="Enter full name..."
+                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                    required
+                                    autoFocus
+                                />
+                            </div>
+                            
+                            <div className="flex space-x-3">
+                                <button 
+                                    type="button"
+                                    onClick={onClose}
+                                    className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    type="submit"
+                                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+                                >
+                                    Add to Database
+                                </button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            );
+        }
+
+        // Render the app
+        ReactDOM.render(<PPEDashboard />, document.getElementById('root'));
+    </script>
+</body>
+</html> 
