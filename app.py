@@ -558,72 +558,154 @@ def control_camera():
 
 @app.route('/api/config')
 def get_config():
-    return jsonify({
-        'camera': CAMERA_CONFIG,
-        'detection': DETECTION_CONFIG,
-        'display': DISPLAY_CONFIG
-    })
+    """Get current system configuration"""
+    try:
+        return jsonify({
+            "camera": {
+                "ip": CAMERA_CONFIG.get('ip', ''),
+                "port": CAMERA_CONFIG.get('rtsp_port', 554),
+                "stream_path": CAMERA_CONFIG.get('stream_path', ''),
+                "detection_interval": CAMERA_CONFIG.get('detection_interval', 1),
+                "use_low_resolution": CAMERA_CONFIG.get('use_low_resolution', False),
+                "frame_skip": CAMERA_CONFIG.get('frame_skip', 3),
+                "buffer_size": CAMERA_CONFIG.get('buffer_size', 1),
+                "fps_limit": CAMERA_CONFIG.get('fps_limit', 15)
+            },
+            "detection": {
+                "detect_unknown_people": DETECTION_CONFIG.get('detect_unknown_people', True),
+                "detect_ppe": DETECTION_CONFIG.get('detect_ppe', True),
+                "unknown_detection_cooldown": DETECTION_CONFIG.get('unknown_detection_cooldown', 30),
+                "yolo_confidence": DETECTION_CONFIG.get('yolo_confidence', 0.5),
+                "face_tolerance": DETECTION_CONFIG.get('face_tolerance', 0.6),
+                "required_ppe": DETECTION_CONFIG.get('required_ppe', ["Hardhat", "Mask", "Safety Vest"]),
+                "alert_cooldown": DETECTION_CONFIG.get('alert_cooldown', 30),
+                "log_interval": DETECTION_CONFIG.get('log_interval', 30),
+                "auto_cleanup_logs": DETECTION_CONFIG.get('auto_cleanup_logs', False),
+                "max_log_days": DETECTION_CONFIG.get('max_log_days', 30)
+            },
+            "system": {
+                "model_path": PATHS.get('model_path', ''),
+                "employee_faces_dir": PATHS.get('employee_faces', ''),
+                "output_dir": PATHS.get('output_directory', ''),
+                "version": "2.0.0",
+                "last_updated": datetime.now().isoformat()
+            }
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to get config: {e}")
+        return jsonify({"error": "Failed to retrieve configuration"}), 500
 
 @app.route('/api/config/detection', methods=['PUT'])
 def update_detection_config():
     """Update detection configuration settings"""
     try:
-        data = request.json
+        data = request.get_json()
         
-        # Update allowed settings
-        if 'detect_unknown_people' in data:
-            DETECTION_CONFIG['detect_unknown_people'] = bool(data['detect_unknown_people'])
+        # Validate input data
+        if not data:
+            return jsonify({"success": False, "message": "No data provided"})
         
-        if 'detect_ppe' in data:
-            DETECTION_CONFIG['detect_ppe'] = bool(data['detect_ppe'])
+        # Define allowed settings with validation
+        allowed_settings = {
+            'detect_unknown_people': bool,
+            'detect_ppe': bool,
+            'unknown_detection_cooldown': (int, 5, 300),  # min, max values
+            'yolo_confidence': (float, 0.1, 1.0),
+            'face_tolerance': (float, 0.1, 1.0),
+            'detection_interval': (int, 1, 10),
+            'use_low_resolution': bool,
+            'required_ppe': list,
+            'alert_cooldown': (int, 5, 300),
+            'log_interval': (int, 10, 300),
+            'auto_cleanup_logs': bool,
+            'max_log_days': (int, 7, 365),
+            'frame_skip': (int, 0, 10),
+            'buffer_size': (int, 1, 10),
+            'fps_limit': (int, 5, 30)
+        }
         
-        if 'unknown_detection_cooldown' in data:
-            cooldown = int(data['unknown_detection_cooldown'])
-            if 5 <= cooldown <= 300:  # Between 5 seconds and 5 minutes
-                DETECTION_CONFIG['unknown_detection_cooldown'] = cooldown
+        # Validate and update settings
+        updated_settings = {}
+        errors = []
         
-        if 'yolo_confidence' in data:
-            confidence = float(data['yolo_confidence'])
-            if 0.1 <= confidence <= 1.0:
-                DETECTION_CONFIG['yolo_confidence'] = confidence
+        for key, value in data.items():
+            if key not in allowed_settings:
+                errors.append(f"Unknown setting: {key}")
+                continue
+                
+            setting_type = allowed_settings[key]
+            
+            # Type validation
+            if isinstance(setting_type, type):
+                if not isinstance(value, setting_type):
+                    errors.append(f"{key} must be of type {setting_type.__name__}")
+                    continue
+                updated_settings[key] = value
+            elif isinstance(setting_type, tuple):
+                # Range validation for numeric types
+                expected_type, min_val, max_val = setting_type
+                if not isinstance(value, expected_type):
+                    errors.append(f"{key} must be of type {expected_type.__name__}")
+                    continue
+                if not (min_val <= value <= max_val):
+                    errors.append(f"{key} must be between {min_val} and {max_val}")
+                    continue
+                updated_settings[key] = value
         
-        if 'face_tolerance' in data:
-            tolerance = float(data['face_tolerance'])
-            if 0.1 <= tolerance <= 1.0:
-                DETECTION_CONFIG['face_tolerance'] = tolerance
+        # Special validation for required_ppe
+        if 'required_ppe' in updated_settings:
+            valid_ppe_items = ["Hardhat", "Mask", "Safety Vest", "Safety Glasses", "Gloves", "Safety Boots", "High-Vis Jacket"]
+            ppe_list = updated_settings['required_ppe']
+            
+            if not isinstance(ppe_list, list):
+                errors.append("required_ppe must be a list")
+            elif data.get('detect_ppe', True) and len(ppe_list) == 0:
+                errors.append("At least one PPE item must be selected when PPE detection is enabled")
+            elif not all(item in valid_ppe_items for item in ppe_list):
+                errors.append(f"Invalid PPE items. Must be from: {', '.join(valid_ppe_items)}")
         
-        if 'detection_interval' in data:
-            interval = int(data['detection_interval'])
-            if 1 <= interval <= 10:  # Process every 1-10 frames
-                CAMERA_CONFIG['detection_interval'] = interval
+        if errors:
+            return jsonify({"success": False, "message": "; ".join(errors)})
         
-        if 'use_low_resolution' in data:
-            CAMERA_CONFIG['use_low_resolution'] = bool(data['use_low_resolution'])
-            # Update stream path
-            if CAMERA_CONFIG['use_low_resolution']:
-                CAMERA_CONFIG['stream_path'] = 'stream2'  # Lower resolution
-            else:
-                CAMERA_CONFIG['stream_path'] = 'stream1'  # Higher resolution
+        # Update the global configuration
+        for key, value in updated_settings.items():
+            if key in ['detect_unknown_people', 'detect_ppe', 'unknown_detection_cooldown', 
+                      'yolo_confidence', 'face_tolerance', 'required_ppe', 'alert_cooldown', 
+                      'log_interval', 'auto_cleanup_logs', 'max_log_days']:
+                DETECTION_CONFIG[key] = value
+            elif key in ['detection_interval', 'use_low_resolution', 'frame_skip', 'buffer_size', 'fps_limit']:
+                CAMERA_CONFIG[key] = value
         
-        # Save updated config to file
+        # Update the detection system's settings if it's running
+        if detection_system:
+            # Update required PPE
+            if 'required_ppe' in updated_settings:
+                detection_system.required_ppe = set(updated_settings['required_ppe'])
+            
+            # Update other detection settings
+            for key in ['detect_unknown_people', 'detect_ppe', 'unknown_detection_cooldown']:
+                if key in updated_settings:
+                    setattr(detection_system, key, updated_settings[key])
+        
+        # Save configuration to file
         _save_config_to_file()
         
         return jsonify({
-            'success': True, 
-            'message': 'Detection configuration updated',
-            'config': DETECTION_CONFIG
+            "success": True, 
+            "message": "Settings updated successfully",
+            "updated_settings": updated_settings
         })
         
     except Exception as e:
-        print(f"[ERROR] Failed to update detection config: {e}")
-        return jsonify({'success': False, 'message': str(e)}), 500
+        print(f"[ERROR] Failed to update config: {e}")
+        return jsonify({"success": False, "message": f"Failed to update settings: {str(e)}"})
 
 def _save_config_to_file():
-    """Save current configuration back to camera_config.py"""
+    """Save current configuration to camera_config.py file"""
     try:
         config_content = f'''"""
 Camera Configuration for Live PPE Detection System
-Auto-generated by setup_system.py
+Auto-generated by app.py - Last updated: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 """
 
 # TP-Link Tapo C520 Camera Configuration
@@ -631,6 +713,7 @@ CAMERA_CONFIG = {{
     # Network Configuration
     "ip": "{CAMERA_CONFIG['ip']}",
     "rtsp_port": {CAMERA_CONFIG['rtsp_port']},
+    "onvif_port": {CAMERA_CONFIG.get('onvif_port', 2020)},
     
     # Authentication
     "username": "{CAMERA_CONFIG['username']}",
@@ -638,27 +721,29 @@ CAMERA_CONFIG = {{
     
     # Stream Configuration
     "stream_path": "{CAMERA_CONFIG['stream_path']}",
-         "use_tcp": {CAMERA_CONFIG['use_tcp']},
-     
-     # Performance Settings
-     "fps_limit": {CAMERA_CONFIG['fps_limit']},
-     "buffer_size": {CAMERA_CONFIG['buffer_size']},
-     "frame_skip": {CAMERA_CONFIG['frame_skip']},
-     "use_low_resolution": {CAMERA_CONFIG.get('use_low_resolution', False)},
-     "detection_interval": {CAMERA_CONFIG.get('detection_interval', 1)},
+    "use_tcp": {CAMERA_CONFIG.get('use_tcp', True)},
+    
+    # Performance Settings
+    "fps_limit": {CAMERA_CONFIG.get('fps_limit', 15)},
+    "buffer_size": {CAMERA_CONFIG.get('buffer_size', 1)},
+    "frame_skip": {CAMERA_CONFIG.get('frame_skip', 3)},
+    "use_low_resolution": {CAMERA_CONFIG.get('use_low_resolution', False)},
+    "detection_interval": {CAMERA_CONFIG.get('detection_interval', 1)},
 }}
 
 # Detection Configuration
 DETECTION_CONFIG = {{
     "required_ppe": {DETECTION_CONFIG['required_ppe']},
-    "yolo_confidence": {DETECTION_CONFIG['yolo_confidence']},
-    "face_tolerance": {DETECTION_CONFIG['face_tolerance']},
-    "face_model": "{DETECTION_CONFIG['face_model']}",
-    "log_interval": {DETECTION_CONFIG['log_interval']},
-         "alert_cooldown": {DETECTION_CONFIG['alert_cooldown']},
-     "detect_unknown_people": {DETECTION_CONFIG['detect_unknown_people']},
-     "unknown_detection_cooldown": {DETECTION_CONFIG['unknown_detection_cooldown']},
-     "detect_ppe": {DETECTION_CONFIG.get('detect_ppe', True)},
+    "yolo_confidence": {DETECTION_CONFIG.get('yolo_confidence', 0.5)},
+    "face_tolerance": {DETECTION_CONFIG.get('face_tolerance', 0.6)},
+    "face_model": "{DETECTION_CONFIG.get('face_model', 'hog')}",
+    "log_interval": {DETECTION_CONFIG.get('log_interval', 30)},
+    "alert_cooldown": {DETECTION_CONFIG.get('alert_cooldown', 30)},
+    "detect_unknown_people": {DETECTION_CONFIG.get('detect_unknown_people', True)},
+    "unknown_detection_cooldown": {DETECTION_CONFIG.get('unknown_detection_cooldown', 30)},
+    "detect_ppe": {DETECTION_CONFIG.get('detect_ppe', True)},
+    "auto_cleanup_logs": {DETECTION_CONFIG.get('auto_cleanup_logs', False)},
+    "max_log_days": {DETECTION_CONFIG.get('max_log_days', 30)},
 }}
 
 # Directory Configuration
@@ -672,8 +757,8 @@ PATHS = {{
 # Display Configuration
 DISPLAY_CONFIG = {{
     "window_name": "{DISPLAY_CONFIG['window_name']}",
-    "show_fps": {DISPLAY_CONFIG['show_fps']},
-    "show_confidence": {DISPLAY_CONFIG['show_confidence']},
+    "show_fps": {DISPLAY_CONFIG.get('show_fps', True)},
+    "show_confidence": {DISPLAY_CONFIG.get('show_confidence', True)},
     "face_color": {DISPLAY_CONFIG['face_color']},
     "ppe_compliant_color": {DISPLAY_CONFIG['ppe_compliant_color']},
     "ppe_other_color": {DISPLAY_CONFIG['ppe_other_color']},
@@ -684,7 +769,7 @@ DISPLAY_CONFIG = {{
 def get_rtsp_url():
     """Generate RTSP URL from configuration"""
     config = CAMERA_CONFIG
-    return f"rtsp://{config['username']}:{config['password']}@{config['ip']}:{config['rtsp_port']}/{config['stream_path']}"
+    return f"rtsp://{{config['username']}}:{{config['password']}}@{{config['ip']}}:{{config['rtsp_port']}}/{{config['stream_path']}}"
 
 def print_config():
     """Print current configuration (hiding password)"""
@@ -710,6 +795,7 @@ if __name__ == "__main__":
     print_config()
 '''
         
+        # Write to file
         with open('camera_config.py', 'w') as f:
             f.write(config_content)
             
