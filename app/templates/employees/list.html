@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+
+{% block title %}Employees{% endblock %}
+
+{% block extra_css %}
+<style>
+    .employee-card {
+        border-radius: 15px;
+        border: none;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+        transition: transform 0.3s ease;
+        overflow: hidden;
+    }
+    
+    .employee-card:hover {
+        transform: translateY(-5px);
+    }
+    
+    .employee-avatar {
+        width: 80px;
+        height: 80px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        color: white;
+        font-size: 2rem;
+        font-weight: bold;
+    }
+    
+    .status-badge {
+        position: absolute;
+        top: 10px;
+        right: 10px;
+        z-index: 10;
+    }
+    
+    .search-filters {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    
+    .facial-preview {
+        width: 60px;
+        height: 60px;
+        border-radius: 50%;
+        object-fit: cover;
+        border: 3px solid #e9ecef;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2>
+                <i class="fas fa-users me-2"></i>
+                Employee Management
+            </h2>
+            {% if current_user.is_admin %}
+            <a href="/onboard-employee" class="btn btn-primary">
+                <i class="fas fa-user-plus me-2"></i>Add New Employee
+            </a>
+            {% endif %}
+        </div>
+    </div>
+</div>
+
+<!-- Search and Filters -->
+<div class="search-filters">
+    <div class="row">
+        <div class="col-md-4">
+            <label class="form-label">Search Employees</label>
+            <div class="input-group">
+                <span class="input-group-text">
+                    <i class="fas fa-search"></i>
+                </span>
+                <input type="text" class="form-control" id="searchInput" placeholder="Search by name, email, or position...">
+            </div>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Department</label>
+            <select class="form-select" id="departmentFilter">
+                <option value="">All Departments</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Status</label>
+            <select class="form-select" id="statusFilter">
+                <option value="">All Status</option>
+                <option value="active">Active</option>
+                <option value="inactive">Inactive</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label class="form-label">&nbsp;</label>
+            <div class="d-grid">
+                <button class="btn btn-outline-primary" onclick="resetFilters()">
+                    <i class="fas fa-undo me-1"></i>Reset
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Employee Stats -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="totalEmployeesCount">0</h3>
+                <small>Total Employees</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="activeEmployeesCount">0</h3>
+                <small>Active</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="withFaceIdCount">0</h3>
+                <small>With Face ID</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="pendingSetupCount">0</h3>
+                <small>Pending Setup</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Employee Grid -->
+<div class="row" id="employeeGrid">
+    <div class="col-12 text-center py-5">
+        <div class="spinner-border text-primary" role="status">
+            <span class="visually-hidden">Loading employees...</span>
+        </div>
+    </div>
+</div>
+
+<!-- Employee Details Modal -->
+<div class="modal fade" id="employeeModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Employee Details</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <div class="employee-avatar mx-auto mb-3" id="modalAvatar">
+                            <span id="modalInitials">--</span>
+                        </div>
+                        <h5 id="modalName">--</h5>
+                        <p class="text-muted" id="modalPosition">--</p>
+                        <span class="badge" id="modalStatus">--</span>
+                    </div>
+                    <div class="col-md-8">
+                        <form id="editEmployeeForm">
+                            <input type="hidden" id="employeeId">
+                            <div class="mb-3">
+                                <label class="form-label">Full Name</label>
+                                <input type="text" class="form-control" id="editName" required>
+                            </div>
+                            <div class="mb-3">
+                                <label class="form-label">Email</label>
+                                <input type="email" class="form-control" id="editEmail" required>
+                            </div>
+                            <div class="row">
+                                <div class="col-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Position</label>
+                                        <input type="text" class="form-control" id="editPosition" required>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <div class="mb-3">
+                                        <label class="form-label">Department</label>
+                                        <input type="text" class="form-control" id="editDepartment" required>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input type="checkbox" class="form-check-input" id="editIsActive">
+                                    <label class="form-check-label">Active Employee</label>
+                                </div>
+                            </div>
+                            {% if current_user.is_admin %}
+                            <div class="mb-3">
+                                <div class="form-check">
+                                    <input type="checkbox" class="form-check-input" id="editIsAdmin">
+                                    <label class="form-check-label">Administrator Privileges</label>
+                                </div>
+                            </div>
+                            {% endif %}
+                        </form>
+                        
+                        <!-- Face Recognition Section -->
+                        <div class="mt-4">
+                            <h6><i class="fas fa-camera me-2"></i>Face Recognition</h6>
+                            <div class="d-flex align-items-center">
+                                <div id="faceIdStatus" class="me-3">
+                                    <span class="badge bg-secondary">No Face ID</span>
+                                </div>
+                                <button class="btn btn-sm btn-outline-primary" onclick="setupFaceRecognition()">
+                                    <i class="fas fa-camera me-1"></i>Setup Face ID
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
+                {% if current_user.is_admin %}
+                <button type="button" class="btn btn-danger" onclick="deleteEmployee()" id="deleteBtn">
+                    <i class="fas fa-trash me-1"></i>Delete
+                </button>
+                <button type="button" class="btn btn-primary" onclick="saveEmployee()">
+                    <i class="fas fa-save me-1"></i>Save Changes
+                </button>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Face Recognition Setup Modal -->
+<div class="modal fade" id="faceSetupModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Setup Face Recognition</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="text-center">
+                    <div class="camera-preview mb-3" style="height: 300px; background: #f8f9fa; border-radius: 10px; display: flex; align-items: center; justify-content: center;">
+                        <div>
+                            <i class="fas fa-camera fa-3x text-muted mb-2"></i>
+                            <p class="text-muted">Position face in the camera</p>
+                            <button class="btn btn-primary" onclick="captureEmployeeFace()">
+                                <i class="fas fa-camera me-2"></i>Capture Face
+                            </button>
+                        </div>
+                    </div>
+                    <p class="text-muted">Please ensure good lighting and look directly at the camera</p>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let employees = [];
+let filteredEmployees = [];
+let currentEmployee = null;
+
+document.addEventListener('DOMContentLoaded', function() {
+    loadEmployees();
+    setupFilters();
+});
+
+async function loadEmployees() {
+    try {
+        const response = await fetch('/api/employees');
+        const data = await response.json();
+        employees = data.employees || [];
+        filteredEmployees = [...employees];
+        
+        renderEmployees();
+        updateStats();
+        loadDepartments();
+    } catch (error) {
+        console.error('Error loading employees:', error);
+        showNotification('Error loading employees', 'error');
+    }
+}
+
+function renderEmployees() {
+    const grid = document.getElementById('employeeGrid');
+    
+    if (filteredEmployees.length === 0) {
+        grid.innerHTML = `
+            <div class="col-12 text-center py-5">
+                <i class="fas fa-users fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">No employees found</h5>
+                <p class="text-muted">Try adjusting your search filters</p>
+            </div>
+        `;
+        return;
+    }
+    
+    grid.innerHTML = filteredEmployees.map(emp => `
+        <div class="col-md-6 col-lg-4 mb-4">
+            <div class="card employee-card position-relative">
+                <span class="badge ${emp.is_active ? 'bg-success' : 'bg-secondary'} status-badge">
+                    ${emp.is_active ? 'Active' : 'Inactive'}
+                </span>
+                <div class="card-body text-center">
+                    <div class="employee-avatar mx-auto mb-3">
+                        ${emp.name.charAt(0).toUpperCase()}
+                    </div>
+                    <h6 class="card-title">${emp.name}</h6>
+                    <p class="text-muted small">${emp.position}</p>
+                    <p class="text-muted small">${emp.department}</p>
+                    <div class="mb-3">
+                        ${emp.facial_id ? 
+                            '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Face ID Setup</span>' : 
+                            '<span class="badge bg-warning"><i class="fas fa-exclamation me-1"></i>Face ID Pending</span>'
+                        }
+                        ${emp.is_admin ? '<span class="badge bg-primary ms-1">Admin</span>' : ''}
+                    </div>
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-outline-primary btn-sm" onclick="viewEmployee(${emp.id})">
+                            <i class="fas fa-eye me-1"></i>View Details
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+}
+
+function updateStats() {
+    document.getElementById('totalEmployeesCount').textContent = employees.length;
+    document.getElementById('activeEmployeesCount').textContent = employees.filter(e => e.is_active).length;
+    document.getElementById('withFaceIdCount').textContent = employees.filter(e => e.facial_id).length;
+    document.getElementById('pendingSetupCount').textContent = employees.filter(e => !e.facial_id).length;
+}
+
+function loadDepartments() {
+    const departments = [...new Set(employees.map(e => e.department))];
+    const select = document.getElementById('departmentFilter');
+    
+    departments.forEach(dept => {
+        const option = document.createElement('option');
+        option.value = dept;
+        option.textContent = dept;
+        select.appendChild(option);
+    });
+}
+
+function setupFilters() {
+    const searchInput = document.getElementById('searchInput');
+    const departmentFilter = document.getElementById('departmentFilter');
+    const statusFilter = document.getElementById('statusFilter');
+    
+    [searchInput, departmentFilter, statusFilter].forEach(input => {
+        input.addEventListener('input', applyFilters);
+    });
+}
+
+function applyFilters() {
+    const search = document.getElementById('searchInput').value.toLowerCase();
+    const department = document.getElementById('departmentFilter').value;
+    const status = document.getElementById('statusFilter').value;
+    
+    filteredEmployees = employees.filter(emp => {
+        const matchesSearch = !search || 
+            emp.name.toLowerCase().includes(search) ||
+            emp.email.toLowerCase().includes(search) ||
+            emp.position.toLowerCase().includes(search);
+            
+        const matchesDepartment = !department || emp.department === department;
+        const matchesStatus = !status || 
+            (status === 'active' && emp.is_active) ||
+            (status === 'inactive' && !emp.is_active);
+            
+        return matchesSearch && matchesDepartment && matchesStatus;
+    });
+    
+    renderEmployees();
+}
+
+function resetFilters() {
+    document.getElementById('searchInput').value = '';
+    document.getElementById('departmentFilter').value = '';
+    document.getElementById('statusFilter').value = '';
+    filteredEmployees = [...employees];
+    renderEmployees();
+}
+
+function viewEmployee(employeeId) {
+    currentEmployee = employees.find(e => e.id === employeeId);
+    if (!currentEmployee) return;
+    
+    // Populate modal
+    document.getElementById('modalInitials').textContent = currentEmployee.name.charAt(0).toUpperCase();
+    document.getElementById('modalName').textContent = currentEmployee.name;
+    document.getElementById('modalPosition').textContent = currentEmployee.position;
+    document.getElementById('modalStatus').textContent = currentEmployee.is_active ? 'Active' : 'Inactive';
+    document.getElementById('modalStatus').className = `badge ${currentEmployee.is_active ? 'bg-success' : 'bg-secondary'}`;
+    
+    // Populate form
+    document.getElementById('employeeId').value = currentEmployee.id;
+    document.getElementById('editName').value = currentEmployee.name;
+    document.getElementById('editEmail').value = currentEmployee.email;
+    document.getElementById('editPosition').value = currentEmployee.position;
+    document.getElementById('editDepartment').value = currentEmployee.department;
+    document.getElementById('editIsActive').checked = currentEmployee.is_active;
+    document.getElementById('editIsAdmin').checked = currentEmployee.is_admin;
+    
+    // Face ID status
+    const faceIdStatus = document.getElementById('faceIdStatus');
+    if (currentEmployee.facial_id) {
+        faceIdStatus.innerHTML = '<span class="badge bg-success"><i class="fas fa-check me-1"></i>Face ID Active</span>';
+    } else {
+        faceIdStatus.innerHTML = '<span class="badge bg-warning"><i class="fas fa-exclamation me-1"></i>Face ID Pending</span>';
+    }
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('employeeModal'));
+    modal.show();
+}
+
+async function saveEmployee() {
+    if (!currentEmployee) return;
+    
+    const formData = {
+        name: document.getElementById('editName').value,
+        email: document.getElementById('editEmail').value,
+        position: document.getElementById('editPosition').value,
+        department: document.getElementById('editDepartment').value,
+        is_active: document.getElementById('editIsActive').checked,
+        is_admin: document.getElementById('editIsAdmin').checked
+    };
+    
+    try {
+        const response = await fetch(`/api/employees/${currentEmployee.id}`, {
+            method: 'PUT',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify(formData)
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Employee updated successfully', 'success');
+            loadEmployees();
+            bootstrap.Modal.getInstance(document.getElementById('employeeModal')).hide();
+        } else {
+            showNotification(data.message || 'Error updating employee', 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+async function deleteEmployee() {
+    if (!currentEmployee) return;
+    
+    if (!confirm(`Are you sure you want to delete ${currentEmployee.name}? This action cannot be undone.`)) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/employees/${currentEmployee.id}`, {
+            method: 'DELETE'
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Employee deleted successfully', 'success');
+            loadEmployees();
+            bootstrap.Modal.getInstance(document.getElementById('employeeModal')).hide();
+        } else {
+            showNotification(data.message || 'Error deleting employee', 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+
+function setupFaceRecognition() {
+    const modal = new bootstrap.Modal(document.getElementById('faceSetupModal'));
+    modal.show();
+}
+
+async function captureEmployeeFace() {
+    if (!currentEmployee) return;
+    
+    // In real implementation, this would capture from camera and process with your face recognition system
+    // For now, simulate the process
+    
+    try {
+        const response = await fetch(`/api/employees/${currentEmployee.id}/setup-face`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                face_data: 'simulated_face_encoding_' + Date.now()
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.success) {
+            showNotification('Face recognition setup completed!', 'success');
+            loadEmployees();
+            bootstrap.Modal.getInstance(document.getElementById('faceSetupModal')).hide();
+            bootstrap.Modal.getInstance(document.getElementById('employeeModal')).hide();
+        } else {
+            showNotification(data.message || 'Error setting up face recognition', 'error');
+        }
+    } catch (error) {
+        showNotification('Error: ' + error.message, 'error');
+    }
+}
+</script>
+{% endblock %} 

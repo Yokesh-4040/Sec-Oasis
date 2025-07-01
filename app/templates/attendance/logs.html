@@ -1,0 +1,423 @@
+{% extends "base.html" %}
+
+{% block title %}Attendance Logs{% endblock %}
+
+{% block extra_css %}
+<style>
+    .attendance-filters {
+        background: white;
+        border-radius: 15px;
+        padding: 1.5rem;
+        margin-bottom: 2rem;
+        box-shadow: 0 5px 15px rgba(0,0,0,0.1);
+    }
+    
+    .log-entry {
+        border-left: 4px solid #e9ecef;
+        transition: all 0.3s ease;
+    }
+    
+    .log-entry.check-in {
+        border-left-color: #28a745;
+    }
+    
+    .log-entry.check-out {
+        border-left-color: #ffc107;
+    }
+    
+    .time-badge {
+        font-family: 'Courier New', monospace;
+        font-weight: bold;
+    }
+    
+    .export-section {
+        background: #f8f9fa;
+        border-radius: 10px;
+        padding: 1rem;
+        margin-bottom: 2rem;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-12 mb-4">
+        <div class="d-flex justify-content-between align-items-center">
+            <h2>
+                <i class="fas fa-clock me-2"></i>
+                Attendance Logs
+            </h2>
+            <div class="btn-group">
+                <button class="btn btn-outline-primary" onclick="refreshLogs()">
+                    <i class="fas fa-sync me-1"></i>Refresh
+                </button>
+                <button class="btn btn-outline-success" onclick="exportLogs()">
+                    <i class="fas fa-download me-1"></i>Export
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Filters -->
+<div class="attendance-filters">
+    <div class="row">
+        <div class="col-md-3">
+            <label class="form-label">Start Date</label>
+            <input type="date" class="form-control" id="startDate">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">End Date</label>
+            <input type="date" class="form-control" id="endDate">
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Employee</label>
+            <select class="form-select" id="employeeFilter">
+                <option value="">All Employees</option>
+            </select>
+        </div>
+        <div class="col-md-3">
+            <label class="form-label">Action</label>
+            <select class="form-select" id="actionFilter">
+                <option value="">All Actions</option>
+                <option value="check_in">Check In</option>
+                <option value="check_out">Check Out</option>
+            </select>
+        </div>
+    </div>
+    <div class="row mt-3">
+        <div class="col-12 text-end">
+            <button class="btn btn-primary" onclick="applyFilters()">
+                <i class="fas fa-filter me-1"></i>Apply Filters
+            </button>
+            <button class="btn btn-outline-secondary ms-2" onclick="resetFilters()">
+                <i class="fas fa-undo me-1"></i>Reset
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Export Section -->
+<div class="export-section">
+    <div class="row align-items-center">
+        <div class="col-md-6">
+            <h6 class="mb-0">
+                <i class="fas fa-download me-2"></i>Export Options
+            </h6>
+            <small class="text-muted">Download attendance data in various formats</small>
+        </div>
+        <div class="col-md-6 text-end">
+            <div class="btn-group">
+                <button class="btn btn-sm btn-outline-success" onclick="exportCSV()">
+                    <i class="fas fa-file-csv me-1"></i>CSV
+                </button>
+                <button class="btn btn-sm btn-outline-danger" onclick="exportPDF()">
+                    <i class="fas fa-file-pdf me-1"></i>PDF
+                </button>
+                <button class="btn btn-sm btn-outline-primary" onclick="exportExcel()">
+                    <i class="fas fa-file-excel me-1"></i>Excel
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Statistics -->
+<div class="row mb-4">
+    <div class="col-md-3">
+        <div class="card bg-primary text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="totalLogs">0</h3>
+                <small>Total Logs</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-success text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="checkIns">0</h3>
+                <small>Check-ins</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-warning text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="checkOuts">0</h3>
+                <small>Check-outs</small>
+            </div>
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="card bg-info text-white">
+            <div class="card-body text-center">
+                <h3 class="mb-0" id="uniqueEmployees">0</h3>
+                <small>Unique Employees</small>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Attendance Logs -->
+<div class="card">
+    <div class="card-header">
+        <h5 class="mb-0">
+            <i class="fas fa-list me-2"></i>Attendance Records
+        </h5>
+    </div>
+    <div class="card-body">
+        <div id="attendanceLogs">
+            <div class="text-center py-5">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Loading logs...</span>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Pagination -->
+        <nav class="mt-4" id="pagination" style="display: none;">
+            <ul class="pagination justify-content-center">
+                <li class="page-item">
+                    <a class="page-link" href="#" onclick="previousPage()">Previous</a>
+                </li>
+                <li class="page-item active">
+                    <a class="page-link" href="#">1</a>
+                </li>
+                <li class="page-item">
+                    <a class="page-link" href="#" onclick="nextPage()">Next</a>
+                </li>
+            </ul>
+        </nav>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+let logs = [];
+let filteredLogs = [];
+let currentPage = 1;
+const logsPerPage = 20;
+
+document.addEventListener('DOMContentLoaded', function() {
+    initializeDates();
+    loadEmployees();
+    loadLogs();
+});
+
+function initializeDates() {
+    const today = new Date();
+    const lastWeek = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+    
+    document.getElementById('startDate').value = lastWeek.toISOString().split('T')[0];
+    document.getElementById('endDate').value = today.toISOString().split('T')[0];
+}
+
+async function loadEmployees() {
+    try {
+        const response = await fetch('/api/employees');
+        const data = await response.json();
+        
+        const select = document.getElementById('employeeFilter');
+        data.employees.forEach(emp => {
+            const option = document.createElement('option');
+            option.value = emp.id;
+            option.textContent = emp.name;
+            select.appendChild(option);
+        });
+    } catch (error) {
+        console.error('Error loading employees:', error);
+    }
+}
+
+async function loadLogs() {
+    try {
+        const startDate = document.getElementById('startDate').value;
+        const endDate = document.getElementById('endDate').value;
+        const employeeId = document.getElementById('employeeFilter').value;
+        const action = document.getElementById('actionFilter').value;
+        
+        let url = `/api/attendance/logs?start_date=${startDate}&end_date=${endDate}`;
+        if (employeeId) url += `&employee_id=${employeeId}`;
+        if (action) url += `&action=${action}`;
+        
+        const response = await fetch(url);
+        const data = await response.json();
+        
+        logs = data.logs || [];
+        filteredLogs = [...logs];
+        
+        renderLogs();
+        updateStats();
+    } catch (error) {
+        console.error('Error loading logs:', error);
+        showNotification('Error loading attendance logs', 'error');
+    }
+}
+
+function renderLogs() {
+    const container = document.getElementById('attendanceLogs');
+    
+    if (filteredLogs.length === 0) {
+        container.innerHTML = `
+            <div class="text-center py-5">
+                <i class="fas fa-clipboard-list fa-3x text-muted mb-3"></i>
+                <h5 class="text-muted">No attendance logs found</h5>
+                <p class="text-muted">Try adjusting your filters</p>
+            </div>
+        `;
+        return;
+    }
+    
+    const startIndex = (currentPage - 1) * logsPerPage;
+    const endIndex = startIndex + logsPerPage;
+    const pageData = filteredLogs.slice(startIndex, endIndex);
+    
+    container.innerHTML = pageData.map(log => {
+        const date = new Date(log.created_at);
+        const actionClass = log.action === 'check_in' ? 'check-in' : 'check-out';
+        const actionIcon = log.action === 'check_in' ? 'sign-in-alt' : 'sign-out-alt';
+        const actionColor = log.action === 'check_in' ? 'success' : 'warning';
+        
+        return `
+            <div class="log-entry ${actionClass} p-3 mb-3 border rounded">
+                <div class="row align-items-center">
+                    <div class="col-md-3">
+                        <div class="d-flex align-items-center">
+                            <div class="me-3">
+                                <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center" style="width: 40px; height: 40px;">
+                                    ${log.employee_name.charAt(0).toUpperCase()}
+                                </div>
+                            </div>
+                            <div>
+                                <h6 class="mb-0">${log.employee_name}</h6>
+                                <small class="text-muted">${log.employee_position || 'Employee'}</small>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-2">
+                        <span class="badge bg-${actionColor}">
+                            <i class="fas fa-${actionIcon} me-1"></i>
+                            ${log.action.replace('_', ' ').toUpperCase()}
+                        </span>
+                    </div>
+                    <div class="col-md-3">
+                        <span class="time-badge text-primary">
+                            ${date.toLocaleDateString()}
+                        </span>
+                    </div>
+                    <div class="col-md-2">
+                        <span class="time-badge text-success">
+                            ${date.toLocaleTimeString()}
+                        </span>
+                    </div>
+                    <div class="col-md-2 text-end">
+                        ${log.facial_recognition ? 
+                            '<small class="text-success"><i class="fas fa-camera me-1"></i>Face ID</small>' :
+                            '<small class="text-muted"><i class="fas fa-keyboard me-1"></i>Manual</small>'
+                        }
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+    
+    updatePagination();
+}
+
+function updateStats() {
+    const checkIns = filteredLogs.filter(log => log.action === 'check_in').length;
+    const checkOuts = filteredLogs.filter(log => log.action === 'check_out').length;
+    const uniqueEmps = new Set(filteredLogs.map(log => log.employee_id)).size;
+    
+    document.getElementById('totalLogs').textContent = filteredLogs.length;
+    document.getElementById('checkIns').textContent = checkIns;
+    document.getElementById('checkOuts').textContent = checkOuts;
+    document.getElementById('uniqueEmployees').textContent = uniqueEmps;
+}
+
+function updatePagination() {
+    const totalPages = Math.ceil(filteredLogs.length / logsPerPage);
+    const pagination = document.getElementById('pagination');
+    
+    if (totalPages <= 1) {
+        pagination.style.display = 'none';
+        return;
+    }
+    
+    pagination.style.display = 'block';
+    // Implement pagination controls here
+}
+
+function applyFilters() {
+    loadLogs();
+}
+
+function resetFilters() {
+    initializeDates();
+    document.getElementById('employeeFilter').value = '';
+    document.getElementById('actionFilter').value = '';
+    loadLogs();
+}
+
+function refreshLogs() {
+    loadLogs();
+    showNotification('Logs refreshed', 'success');
+}
+
+function exportCSV() {
+    const csvData = filteredLogs.map(log => ({
+        'Employee Name': log.employee_name,
+        'Action': log.action.replace('_', ' ').toUpperCase(),
+        'Date': new Date(log.created_at).toLocaleDateString(),
+        'Time': new Date(log.created_at).toLocaleTimeString(),
+        'Method': log.facial_recognition ? 'Face Recognition' : 'Manual'
+    }));
+    
+    downloadCSV(csvData, 'attendance_logs.csv');
+    showNotification('CSV exported successfully', 'success');
+}
+
+function exportPDF() {
+    showNotification('PDF export functionality coming soon', 'info');
+}
+
+function exportExcel() {
+    showNotification('Excel export functionality coming soon', 'info');
+}
+
+function downloadCSV(data, filename) {
+    const csvContent = [
+        Object.keys(data[0]).join(','),
+        ...data.map(row => Object.values(row).join(','))
+    ].join('\n');
+    
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const link = document.createElement('a');
+    const url = URL.createObjectURL(blob);
+    
+    link.setAttribute('href', url);
+    link.setAttribute('download', filename);
+    link.style.visibility = 'hidden';
+    
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+function previousPage() {
+    if (currentPage > 1) {
+        currentPage--;
+        renderLogs();
+    }
+}
+
+function nextPage() {
+    const totalPages = Math.ceil(filteredLogs.length / logsPerPage);
+    if (currentPage < totalPages) {
+        currentPage++;
+        renderLogs();
+    }
+}
+</script>
+{% endblock %} 

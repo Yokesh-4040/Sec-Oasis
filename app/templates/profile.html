@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+
+{% block title %}Profile{% endblock %}
+
+{% block content %}
+<div class="row">
+    <div class="col-md-8 mx-auto">
+        <div class="card">
+            <div class="card-header">
+                <h5><i class="fas fa-user me-2"></i>My Profile</h5>
+            </div>
+            <div class="card-body">
+                <div class="row">
+                    <div class="col-md-4 text-center">
+                        <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center mx-auto mb-3" style="width: 100px; height: 100px; font-size: 2rem;">
+                            {{ current_user.name[0].upper() }}
+                        </div>
+                        <h5>{{ current_user.name }}</h5>
+                        <p class="text-muted">{{ current_user.position }}</p>
+                    </div>
+                    <div class="col-md-8">
+                        <h6>Personal Information</h6>
+                        <p><strong>Email:</strong> {{ current_user.email }}</p>
+                        <p><strong>Department:</strong> {{ current_user.department }}</p>
+                        <p><strong>Status:</strong> 
+                            <span class="badge bg-{{ 'success' if current_user.is_active else 'secondary' }}">
+                                {{ 'Active' if current_user.is_active else 'Inactive' }}
+                            </span>
+                        </p>
+                        <p><strong>Role:</strong> 
+                            <span class="badge bg-{{ 'primary' if current_user.is_admin else 'info' }}">
+                                {{ 'Administrator' if current_user.is_admin else 'Employee' }}
+                            </span>
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 

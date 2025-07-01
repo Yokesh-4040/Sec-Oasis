@@ -80,29 +80,51 @@
         /* Ensure modal content is scrollable on mobile */
         @media (max-width: 640px) {
             .modal-content {
-                max-height: 80vh;
+                max-height: 95vh;
                 -webkit-overflow-scrolling: touch;
+            }
+            
+            /* Compact spacing on mobile */
+            .mobile-compact .bg-gray-50 {
+                padding: 12px !important;
+                margin-bottom: 16px !important;
+            }
+            
+            .mobile-compact .space-y-6 > * + * {
+                margin-top: 16px !important;
+            }
+            
+            .mobile-compact .space-y-4 > * + * {
+                margin-top: 12px !important;
             }
         }
         
-        /* Visual indicator for scrollable content */
-        .modal-content {
-            position: relative;
+        /* Enhanced scrollbar for modal content */
+        .modal-scrollable {
+            scrollbar-width: thin;
+            scrollbar-color: #cbd5e0 #f7fafc;
         }
         
-        .modal-content::after {
-            content: '';
-            position: sticky;
-            bottom: 0;
-            display: block;
-            height: 20px;
-            background: linear-gradient(transparent, rgba(255,255,255,0.8));
-            pointer-events: none;
-            margin: 0 -24px -24px -24px;
+        .modal-scrollable::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        .modal-scrollable::-webkit-scrollbar-track {
+            background: #f7fafc;
+            border-radius: 4px;
+        }
+        
+        .modal-scrollable::-webkit-scrollbar-thumb {
+            background: #cbd5e0;
+            border-radius: 4px;
+        }
+        
+        .modal-scrollable::-webkit-scrollbar-thumb:hover {
+            background: #a0aec0;
         }
     </style>
 </head>
-<body class="bg-gray-100">
+<body class="bg-gray-100 font-sans">
     <div id="root"></div>
 
     <script type="text/babel">
@@ -780,212 +802,163 @@
             };
 
             return (
-                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] flex flex-col modal-content shadow-2xl">
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-2 sm:p-4 z-50">
+                    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[95vh] sm:max-h-[90vh] flex flex-col modal-content shadow-2xl">
                         
                         {/* Header */}
-                        <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
-                            <h3 className="text-xl font-bold text-gray-800">System Settings</h3>
+                        <div className="flex items-center justify-between p-4 sm:p-6 border-b border-gray-200 flex-shrink-0">
+                            <h3 className="text-lg sm:text-xl font-bold text-gray-800">System Settings</h3>
                             <button 
                                 onClick={onClose}
-                                className="text-gray-500 hover:text-gray-700 transition-colors"
+                                className="text-gray-500 hover:text-gray-700 transition-colors p-1"
                             >
-                                <i className="fas fa-times text-xl"></i>
+                                <i className="fas fa-times text-lg sm:text-xl"></i>
                             </button>
                         </div>
 
                         {/* Tab Navigation */}
-                        <div className="flex border-b border-gray-200 flex-shrink-0">
+                        <div className="flex border-b border-gray-200 flex-shrink-0 overflow-x-auto">
                             {tabs.map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex-1 px-4 py-3 text-sm font-medium text-center border-b-2 transition-colors ${ 
+                                    className={`flex-1 min-w-0 px-2 sm:px-4 py-2 sm:py-3 text-xs sm:text-sm font-medium text-center border-b-2 transition-colors ${ 
                                         activeTab === tab.id 
                                         ? 'border-blue-500 text-blue-600 bg-blue-50' 
                                         : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'
                                     }`}
                                 >
-                                    <span className="mr-2">{tab.icon}</span>
-                                    {tab.name}
+                                    <span className="mr-1 sm:mr-2">{tab.icon}</span>
+                                    <span className="">{tab.name}</span>
                                 </button>
                             ))}
                         </div>
 
                         {/* Scrollable Content */}
-                        <div className="flex-1 overflow-y-auto p-6">
+                        <div className="flex-1 overflow-y-auto p-4 sm:p-6 min-h-0 modal-scrollable bg-gray-50">
                             
                             {/* Detection Tab */}
                             {activeTab === 'detection' && (
                                 <div className="space-y-6">
-                            {/* Unknown Person Detection */}
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
-                                    <i className="fas fa-user-question text-orange-600 mr-2"></i>
-                                    Unknown Person Detection
-                                </h4>
-                                
-                                <div className="flex items-center justify-between mb-4">
-                                    <div>
-                                        <p className="text-sm text-gray-600">
-                                            Automatically detect and capture unknown people for database addition
-                                        </p>
-                                    </div>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input 
-                                            type="checkbox"
-                                            checked={settings.detect_unknown_people}
-                                            onChange={(e) => setSettings({...settings, detect_unknown_people: e.target.checked})}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                    </label>
-                                </div>
-                                
-                                {settings.detect_unknown_people && (
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Detection Cooldown: {settings.unknown_detection_cooldown} seconds
-                                        </label>
-                                        <input 
-                                            type="range"
-                                            min="5"
-                                            max="120"
-                                            step="5"
-                                            value={settings.unknown_detection_cooldown}
-                                            onChange={(e) => setSettings({...settings, unknown_detection_cooldown: parseInt(e.target.value)})}
-                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                                        />
-                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                            <span>5s</span>
-                                            <span>2min</span>
+                                    {/* Unknown Person Detection */}
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-user-question text-orange-600 mr-2"></i>
+                                            Unknown Person Detection
+                                        </h4>
+                                        
+                                        <div className="flex items-center justify-between mb-4">
+                                            <p className="text-sm text-gray-600 max-w-xs">
+                                                Automatically detect and capture unknown people for database addition
+                                            </p>
+                                            <label className="relative inline-flex items-center cursor-pointer ml-2">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={settings.detect_unknown_people}
+                                                    onChange={(e) => setSettings({...settings, detect_unknown_people: e.target.checked})}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </label>
                                         </div>
+                                        
+                                        {settings.detect_unknown_people && (
+                                            <div>
+                                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                    Detection Cooldown: {settings.unknown_detection_cooldown} seconds
+                                                </label>
+                                                <input 
+                                                    type="range"
+                                                    min="5"
+                                                    max="120"
+                                                    step="5"
+                                                    value={settings.unknown_detection_cooldown}
+                                                    onChange={(e) => setSettings({...settings, unknown_detection_cooldown: parseInt(e.target.value)})}
+                                                    className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                                />
+                                                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                                    <span>5s</span>
+                                                    <span>2min</span>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                )}
-                            </div>
 
-                            {/* PPE Detection Settings */}
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
-                                    <i className="fas fa-hard-hat text-green-600 mr-2"></i>
-                                    PPE Detection Settings
-                                </h4>
-                                
-                                <div className="flex items-center justify-between mb-4">
-                                    <div>
-                                        <p className="text-sm text-gray-600">
-                                            Enable PPE detection (disable for face-only mode)
-                                        </p>
+                                    {/* PPE Detection Settings */}
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-hard-hat text-green-600 mr-2"></i>
+                                            PPE Detection Settings
+                                        </h4>
+                                        
+                                        <div className="flex items-center justify-between mb-4">
+                                            <p className="text-sm text-gray-600 max-w-xs">
+                                                Enable PPE detection (disable for face-only mode)
+                                            </p>
+                                            <label className="relative inline-flex items-center cursor-pointer ml-2">
+                                                <input 
+                                                    type="checkbox"
+                                                    checked={settings.detect_ppe}
+                                                    onChange={(e) => setSettings({...settings, detect_ppe: e.target.checked})}
+                                                    className="sr-only peer"
+                                                />
+                                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                            </label>
+                                        </div>
+                                        
+                                        {settings.detect_ppe && (
+                                            <div className="space-y-4">
+                                                <div>
+                                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                                        YOLO Confidence Threshold: {(settings.yolo_confidence * 100).toFixed(0)}%
+                                                    </label>
+                                                    <input 
+                                                        type="range"
+                                                        min="0.1"
+                                                        max="1.0"
+                                                        step="0.05"
+                                                        value={settings.yolo_confidence}
+                                                        onChange={(e) => setSettings({...settings, yolo_confidence: parseFloat(e.target.value)})}
+                                                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
+                                                    />
+                                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
+                                                        <span>10% (More detections)</span>
+                                                        <span>100% (Fewer, more confident)</span>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        )}
                                     </div>
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input 
-                                            type="checkbox"
-                                            checked={settings.detect_ppe}
-                                            onChange={(e) => setSettings({...settings, detect_ppe: e.target.checked})}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                    </label>
-                                </div>
-                                
-                                {settings.detect_ppe && (
-                                    <div className="space-y-4">
+
+                                    {/* Face Recognition Settings */}
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
+                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
+                                            <i className="fas fa-face-smile text-purple-600 mr-2"></i>
+                                            Face Recognition Settings
+                                        </h4>
+                                        
                                         <div>
                                             <label className="block text-sm font-medium text-gray-700 mb-2">
-                                                YOLO Confidence Threshold: {(settings.yolo_confidence * 100).toFixed(0)}%
+                                                Face Tolerance: {(settings.face_tolerance * 100).toFixed(0)}%
                                             </label>
                                             <input 
                                                 type="range"
                                                 min="0.1"
                                                 max="1.0"
                                                 step="0.05"
-                                                value={settings.yolo_confidence}
-                                                onChange={(e) => setSettings({...settings, yolo_confidence: parseFloat(e.target.value)})}
+                                                value={settings.face_tolerance}
+                                                onChange={(e) => setSettings({...settings, face_tolerance: parseFloat(e.target.value)})}
                                                 className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
                                             />
                                             <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                                <span>10% (More detections)</span>
-                                                <span>100% (Fewer, more confident)</span>
+                                                <span>10% (Strict matching)</span>
+                                                <span>100% (Loose matching)</span>
                                             </div>
                                         </div>
                                     </div>
-                                )}
-                            </div>
-
-                            {/* Face Recognition Settings */}
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
-                                    <i className="fas fa-face-smile text-purple-600 mr-2"></i>
-                                    Face Recognition Settings
-                                </h4>
-                                
-                                <div>
-                                    <label className="block text-sm font-medium text-gray-700 mb-2">
-                                        Face Tolerance: {(settings.face_tolerance * 100).toFixed(0)}%
-                                    </label>
-                                    <input 
-                                        type="range"
-                                        min="0.1"
-                                        max="1.0"
-                                        step="0.05"
-                                        value={settings.face_tolerance}
-                                        onChange={(e) => setSettings({...settings, face_tolerance: parseFloat(e.target.value)})}
-                                        className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                                    />
-                                    <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                        <span>10% (Strict matching)</span>
-                                        <span>100% (Loose matching)</span>
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Performance Settings */}
-                            <div className="bg-gray-50 p-4 rounded-lg">
-                                <h4 className="font-medium text-gray-800 mb-3 flex items-center">
-                                    <i className="fas fa-tachometer-alt text-red-600 mr-2"></i>
-                                    Performance Optimization
-                                </h4>
-                                
-                                <div className="space-y-4">
-                                    <div className="flex items-center justify-between">
-                                        <div>
-                                            <p className="text-sm font-medium text-gray-700">Use Lower Resolution Stream</p>
-                                            <p className="text-xs text-gray-500">Better performance, lower quality</p>
-                                        </div>
-                                        <label className="relative inline-flex items-center cursor-pointer">
-                                            <input 
-                                                type="checkbox"
-                                                checked={settings.use_low_resolution}
-                                                onChange={(e) => setSettings({...settings, use_low_resolution: e.target.checked})}
-                                                className="sr-only peer"
-                                            />
-                                            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
-                                        </label>
-                                    </div>
                                     
-                                    <div>
-                                        <label className="block text-sm font-medium text-gray-700 mb-2">
-                                            Detection Interval: Process every {settings.detection_interval} frame(s)
-                                        </label>
-                                        <input 
-                                            type="range"
-                                            min="1"
-                                            max="5"
-                                            step="1"
-                                            value={settings.detection_interval}
-                                            onChange={(e) => setSettings({...settings, detection_interval: parseInt(e.target.value)})}
-                                            className="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer"
-                                        />
-                                        <div className="flex justify-between text-xs text-gray-500 mt-1">
-                                            <span>Every frame (slower)</span>
-                                            <span>Every 5th frame (faster)</span>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-
                                     {/* Current PPE Requirements */}
-                                    <div className="bg-blue-50 p-4 rounded-lg">
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-medium text-gray-800 mb-3 flex items-center">
                                             <i className="fas fa-list-check text-blue-600 mr-2"></i>
                                             Required PPE Items
@@ -1004,7 +977,7 @@
                             {/* Performance Tab */}
                             {activeTab === 'performance' && (
                                 <div className="space-y-6">
-                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-medium text-gray-800 mb-3 flex items-center">
                                             <i className="fas fa-tachometer-alt text-red-600 mr-2"></i>
                                             Performance Optimization
@@ -1052,49 +1025,49 @@
 
                             {/* Camera Controls Tab */}
                             {activeTab === 'camera' && (
-                                <div className="space-y-6">
-                                    <div className="bg-gray-50 p-4 rounded-lg">
-                                        <h4 className="font-medium text-gray-800 mb-3 flex items-center">
-                                            <i className="fas fa-video text-blue-600 mr-2"></i>
-                                            PTZ Camera Controls
-                                        </h4>
-                                        
+                                <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
+                                    <h4 className="font-medium text-gray-800 mb-4 flex items-center">
+                                        <i className="fas fa-video text-blue-600 mr-2"></i>
+                                        PTZ Camera Controls
+                                    </h4>
+                                    
+                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                                         {/* Pan/Tilt Grid */}
-                                        <div className="mb-6">
-                                            <h5 className="font-medium text-gray-700 mb-3">Pan & Tilt</h5>
-                                            <div className="grid grid-cols-3 gap-2 max-w-32 mx-auto">
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↖">↖</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↑">↑</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↗">↗</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="←">←</button>
-                                                <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="Home">🏠</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="→">→</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↙">↙</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↓">↓</button>
-                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: -0.1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-sm" title="↘">↘</button>
+                                        <div className="mb-4 sm:mb-0">
+                                            <h5 className="font-medium text-gray-700 mb-3 text-center">Pan & Tilt</h5>
+                                            <div className="grid grid-cols-3 gap-2 max-w-40 sm:max-w-32 mx-auto">
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↖"><i className="fas fa-arrow-up-left"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: 0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↑"><i className="fas fa-arrow-up"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↗"><i className="fas fa-arrow-up-right"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: 0})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="←"><i className="fas fa-arrow-left"></i></button>
+                                                <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="bg-blue-500 hover:bg-blue-600 disabled:bg-gray-400 text-white p-2 rounded text-lg" title="Home"><i className="fas fa-home"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: 0})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="→"><i className="fas fa-arrow-right"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: -0.1, y: -0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↙"><i className="fas fa-arrow-down-left"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0, y: -0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↓"><i className="fas fa-arrow-down"></i></button>
+                                                <button onClick={() => sendCameraCommand('pan_tilt', {x: 0.1, y: -0.1})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 p-2 rounded text-lg" title="↘"><i className="fas fa-arrow-down-right"></i></button>
                                             </div>
                                         </div>
 
                                         {/* Zoom Controls */}
-                                        <div className="mb-6">
-                                            <h5 className="font-medium text-gray-700 mb-3">Zoom</h5>
-                                            <div className="flex space-x-2 justify-center">
-                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'in'})} disabled={isControlling} className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-4 py-2 rounded">🔍+ Zoom In</button>
-                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'out'})} disabled={isControlling} className="bg-purple-500 hover:bg-purple-600 disabled:bg-gray-400 text-white px-4 py-2 rounded">🔍- Zoom Out</button>
+                                        <div className="mb-4 sm:mb-0">
+                                            <h5 className="font-medium text-gray-700 mb-3 text-center">Zoom</h5>
+                                            <div className="flex flex-col space-y-2 justify-center">
+                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'in'})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 px-3 sm:px-4 py-2 rounded text-sm flex items-center justify-center"><i className="fas fa-search-plus mr-2"></i> Zoom In</button>
+                                                <button onClick={() => sendCameraCommand('zoom', {direction: 'out'})} disabled={isControlling} className="bg-gray-200 hover:bg-gray-300 disabled:bg-gray-100 text-gray-800 px-3 sm:px-4 py-2 rounded text-sm flex items-center justify-center"><i className="fas fa-search-minus mr-2"></i> Zoom Out</button>
                                             </div>
                                         </div>
 
                                         {/* Preset Controls */}
                                         <div>
-                                            <h5 className="font-medium text-gray-700 mb-3">Presets</h5>
+                                            <h5 className="font-medium text-gray-700 mb-3 text-center">Presets</h5>
                                             <div className="space-y-2">
                                                 <div className="flex space-x-2">
-                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 1})} disabled={isControlling} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">💾 Save Pos 1</button>
-                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">📍 Go Pos 1</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 1})} disabled={isControlling} className="flex-1 bg-blue-100 hover:bg-blue-200 disabled:bg-gray-100 text-blue-800 py-2 px-3 rounded text-sm">💾 Save 1</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 1})} disabled={isControlling} className="flex-1 bg-green-100 hover:bg-green-200 disabled:bg-gray-100 text-green-800 py-2 px-3 rounded text-sm">📍 Go to 1</button>
                                                 </div>
                                                 <div className="flex space-x-2">
-                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 2})} disabled={isControlling} className="flex-1 bg-orange-500 hover:bg-orange-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">💾 Save Pos 2</button>
-                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 2})} disabled={isControlling} className="flex-1 bg-green-500 hover:bg-green-600 disabled:bg-gray-400 text-white py-2 px-3 rounded text-sm">📍 Go Pos 2</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'set', presetId: 2})} disabled={isControlling} className="flex-1 bg-blue-100 hover:bg-blue-200 disabled:bg-gray-100 text-blue-800 py-2 px-3 rounded text-sm">💾 Save 2</button>
+                                                    <button onClick={() => sendCameraCommand('preset', {action: 'goto', presetId: 2})} disabled={isControlling} className="flex-1 bg-green-100 hover:bg-green-200 disabled:bg-gray-100 text-green-800 py-2 px-3 rounded text-sm">📍 Go to 2</button>
                                                 </div>
                                             </div>
                                         </div>
@@ -1104,8 +1077,8 @@
 
                             {/* Advanced Tab */}
                             {activeTab === 'advanced' && (
-                                <div className="space-y-6">
-                                    <div className="bg-gray-50 p-4 rounded-lg">
+                                <div className="space-y-4 sm:space-y-6">
+                                    <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-medium text-gray-800 mb-3 flex items-center">
                                             <i className="fas fa-cogs text-gray-600 mr-2"></i>
                                             Advanced Configuration
@@ -1125,18 +1098,18 @@
                         </div>
 
                         {/* Footer Buttons */}
-                        <div className="flex space-x-3 mt-6 pt-4 border-t flex-shrink-0">
+                        <div className="flex space-x-2 sm:space-x-3 p-4 sm:p-6 border-t border-gray-200 flex-shrink-0 bg-gray-50 rounded-b-xl">
                             <button 
                                 type="button"
                                 onClick={handleReset}
-                                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+                                className="flex-1 bg-gray-200 hover:bg-gray-300 text-gray-800 py-2 px-3 sm:px-4 rounded-lg transition-colors text-sm sm:text-base"
                             >
-                                Reset
+                                Reset to Defaults
                             </button>
                             <button 
                                 type="button"
                                 onClick={onClose}
-                                className="flex-1 bg-gray-300 hover:bg-gray-400 text-gray-800 py-2 px-4 rounded-lg transition-colors"
+                                className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-3 sm:px-4 rounded-lg transition-colors text-sm sm:text-base"
                             >
                                 Cancel
                             </button>
@@ -1144,9 +1117,13 @@
                                 type="button"
                                 onClick={handleSave}
                                 disabled={saving}
-                                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-2 px-4 rounded-lg transition-colors"
+                                className="flex-1 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white py-2 px-3 sm:px-4 rounded-lg transition-colors text-sm sm:text-base"
                             >
-                                {saving ? 'Saving...' : 'Save Changes'}
+                                {saving ? (
+                                    <><i className="fas fa-spinner fa-spin mr-2"></i>Saving...</>
+                                ) : (
+                                    <><i className="fas fa-save mr-2"></i>Save Changes</>
+                                )}
                             </button>
                         </div>
                     </div>
