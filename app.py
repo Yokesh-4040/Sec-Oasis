@@ -63,6 +63,7 @@ class SOasisServer:
         }
         self.unknown_people = []  # Store unknown person detections
         self.live_detection_events = []  # Store live detection events
+        self.unknown_tracking = {}  # Track potential unknown people over time
         self.system_stats = {
             'frames_processed': 0,
             'start_time': None,
@@ -237,23 +238,45 @@ class SOasisServer:
                     # Get face encoding for unknown person handling
                     face_encoding = opencv_face_rec.get_face_encoding(frame, bbox)
                     
-                    detected_people.append({
-                        'name': name,
-                        'bbox': [int(x) for x in bbox],  # Convert to regular int
-                        'confidence': float(confidence),
-                        'recognition_confidence': float(recognition_confidence),
-                        'face_encoding': face_encoding
-                    })
+                    # Only show person in UI if they are:
+                    # 1. A known person (not "Unknown Person")
+                    # 2. OR an unknown person who has completed 20-frame tracking
+                    should_display = True
+                    if name == "Unknown Person":
+                        # Check if this unknown person has been confirmed through tracking
+                        should_display = False
+                        
+                        # Handle unknown people tracking (only if enabled)
+                        if (DETECTION_CONFIG.get("detect_unknown_people", True) and
+                            recognition_confidence < 50):  # Only track truly unknown people
+                            if face_encoding:
+                                self._handle_unknown_person(frame, bbox, face_encoding)
+                        
+                        # Check if this face matches any confirmed unknown person
+                        for unknown in self.unknown_people:
+                            try:
+                                unknown_bbox = unknown.get('bbox', [0, 0, 0, 0])
+                                # Check if faces are in similar location (within 100px)
+                                if (abs(bbox[0] - unknown_bbox[0]) < 100 and 
+                                    abs(bbox[1] - unknown_bbox[1]) < 100):
+                                    should_display = True
+                                    name = f"Unknown #{unknown['id'].split('_')[-1]}"  # Give it a unique label
+                                    break
+                            except Exception:
+                                continue
                     
-                    # Add live detection event
-                    self._add_live_detection_event(name, confidence, recognition_confidence)
-                    
-                    # Handle unknown people (only if enabled and with additional checks)
-                    if (name == "Unknown Person" and 
-                        DETECTION_CONFIG.get("detect_unknown_people", True) and
-                        recognition_confidence < 50):  # Only log truly unknown people
-                        if face_encoding:
-                            self._handle_unknown_person(frame, bbox, face_encoding)
+                    # Only add to detected_people if we should display this person
+                    if should_display:
+                        detected_people.append({
+                            'name': name,
+                            'bbox': [int(x) for x in bbox],  # Convert to regular int
+                            'confidence': float(confidence),
+                            'recognition_confidence': float(recognition_confidence),
+                            'face_encoding': face_encoding
+                        })
+                        
+                        # Add live detection event only for displayed people
+                        self._add_live_detection_event(name, confidence, recognition_confidence)
                             
             except Exception as e:
                 print(f"[WARNING] Face recognition error: {e}")
@@ -283,71 +306,133 @@ class SOasisServer:
         return detected_people, detected_ppe
     
     def _handle_unknown_person(self, frame, bbox, face_encoding):
-        """Handle detection of unknown person"""
+        """Handle detection of unknown person with stable 5-second tracking"""
         if not FACE_RECOGNITION_AVAILABLE or opencv_face_rec is None:
             return
             
-        # Check if this unknown person was recently detected (avoid duplicates)
         current_time = datetime.now()
         
-        # Compare with recent unknown detections to avoid duplicates
-        is_duplicate = False
-        cooldown_seconds = DETECTION_CONFIG.get("unknown_detection_cooldown", 60)  # Increased cooldown
+        # Constants for tracking (configurable)
+        REQUIRED_FRAMES = DETECTION_CONFIG.get("unknown_tracking_frames", 20)  # 20 frames at ~4 FPS = 5 seconds
+        POSITION_THRESHOLD = DETECTION_CONFIG.get("unknown_position_threshold", 80)  # pixels - how close faces need to be to be considered the same person
+        TRACKING_TIMEOUT = DETECTION_CONFIG.get("unknown_tracking_timeout", 10)  # seconds - how long to keep tracking data
+        
+        # Find if this face matches any currently tracked unknown person
+        matched_track_id = None
+        min_distance = float('inf')
+        
+        for track_id, track_data in self.unknown_tracking.items():
+            # Check if tracking data is still valid (not too old)
+            time_diff = (current_time - track_data['last_seen']).total_seconds()
+            if time_diff > TRACKING_TIMEOUT:
+                continue
+                
+            # Calculate distance between current face and tracked face
+            last_bbox = track_data['bbox']
+            center_x = (bbox[0] + bbox[2]) / 2
+            center_y = (bbox[1] + bbox[3]) / 2
+            track_center_x = (last_bbox[0] + last_bbox[2]) / 2
+            track_center_y = (last_bbox[1] + last_bbox[3]) / 2
+            
+            distance = ((center_x - track_center_x) ** 2 + (center_y - track_center_y) ** 2) ** 0.5
+            
+            if distance < POSITION_THRESHOLD and distance < min_distance:
+                min_distance = distance
+                matched_track_id = track_id
+        
+        if matched_track_id:
+            # Update existing track
+            track_data = self.unknown_tracking[matched_track_id]
+            track_data['frame_count'] += 1
+            track_data['last_seen'] = current_time
+            track_data['bbox'] = bbox
+            track_data['latest_frame'] = frame[bbox[1]:bbox[3], bbox[0]:bbox[2]].copy()
+            
+            # Only print tracking progress every 5 frames to reduce console spam
+            if track_data['frame_count'] % 5 == 0:
+                print(f"[DEBUG] Tracking unknown person {matched_track_id}: {track_data['frame_count']}/{REQUIRED_FRAMES} frames")
+            
+            # Check if we've seen this person long enough
+            if track_data['frame_count'] >= REQUIRED_FRAMES:
+                # Promote to confirmed unknown person
+                self._promote_to_unknown_person(track_data, matched_track_id)
+                # Remove from tracking
+                del self.unknown_tracking[matched_track_id]
+        else:
+            # Start new tracking
+            track_id = f"track_{current_time.strftime('%Y%m%d_%H%M%S_%f')}"
+            self.unknown_tracking[track_id] = {
+                'first_seen': current_time,
+                'last_seen': current_time,
+                'frame_count': 1,
+                'bbox': bbox,
+                'face_encoding': face_encoding,
+                'latest_frame': frame[bbox[1]:bbox[3], bbox[0]:bbox[2]].copy()
+            }
+            print(f"[DEBUG] Started tracking new unknown person {track_id}")
+        
+        # Clean up old tracking data
+        current_tracks = list(self.unknown_tracking.keys())
+        for track_id in current_tracks:
+            track_data = self.unknown_tracking[track_id]
+            time_diff = (current_time - track_data['last_seen']).total_seconds()
+            if time_diff > TRACKING_TIMEOUT:
+                print(f"[DEBUG] Removing stale track {track_id} (timeout)")
+                del self.unknown_tracking[track_id]
+    
+    def _promote_to_unknown_person(self, track_data, track_id):
+        """Promote tracked person to confirmed unknown person"""
+        current_time = datetime.now()
+        
+        # Check if this person is already in the unknown list (avoid duplicates)
         for unknown in self.unknown_people:
             try:
-                time_diff = (current_time - datetime.fromisoformat(unknown['timestamp'])).total_seconds()
-                if time_diff < cooldown_seconds:
-                    # Simple bbox-based comparison for faster duplicate detection
-                    old_bbox = unknown.get('bbox', [0, 0, 0, 0])
-                    # Check if faces are in similar location (within 50 pixels)
-                    if (abs(bbox[0] - old_bbox[0]) < 50 and 
-                        abs(bbox[1] - old_bbox[1]) < 50):
-                        is_duplicate = True
-                        unknown['last_seen'] = current_time.isoformat()
-                        break
+                old_bbox = unknown.get('bbox', [0, 0, 0, 0])
+                # Check if faces are in similar location
+                if (abs(track_data['bbox'][0] - old_bbox[0]) < 50 and 
+                    abs(track_data['bbox'][1] - old_bbox[1]) < 50):
+                    print(f"[DEBUG] Skipping duplicate unknown person")
+                    return
             except Exception as e:
-                print(f"[WARNING] Error in duplicate detection: {e}")
                 continue
         
-        if not is_duplicate:
-            # Extract face image
-            left, top, right, bottom = bbox
-            face_img = frame[top:bottom, left:right]
-            
-            # Create unique filename
-            timestamp_str = current_time.strftime("%Y%m%d_%H%M%S")
-            unknown_id = f"unknown_{timestamp_str}_{len(self.unknown_people)}"
-            filename = f"{unknown_id}.jpg"
-            filepath = os.path.join(self.output_dir, "unknown_people", filename)
-            
-            # Create unknown_people directory if it doesn't exist
-            os.makedirs(os.path.join(self.output_dir, "unknown_people"), exist_ok=True)
-            
-            # Save face image
-            cv2.imwrite(filepath, face_img)
-            
-            # Add to unknown people list
-            unknown_person = {
-                'id': unknown_id,
-                'filename': filename,
-                'filepath': filepath,
-                'timestamp': current_time.isoformat(),
-                'last_seen': current_time.isoformat(),
-                'face_encoding': face_encoding if isinstance(face_encoding, list) else face_encoding,
-                'bbox': [int(x) for x in bbox] if bbox else [0, 0, 0, 0],  # Ensure int conversion
-                'added_to_database': False
-            }
-            
-            self.unknown_people.append(unknown_person)
-            
-            # Keep only last 50 unknown people to prevent memory issues
-            if len(self.unknown_people) > 50:
-                # Remove oldest unknown person file
-                oldest = self.unknown_people.pop(0)
-                if os.path.exists(oldest['filepath']):
-                    os.remove(oldest['filepath'])
-            
-            print(f"[INFO] Unknown person detected and saved: {unknown_id}")
+        # Create unique ID and save face image
+        timestamp_str = current_time.strftime("%Y%m%d_%H%M%S")
+        unknown_id = f"unknown_{timestamp_str}_{len(self.unknown_people)}"
+        filename = f"{unknown_id}.jpg"
+        filepath = os.path.join(self.output_dir, "unknown_people", filename)
+        
+        # Create unknown_people directory if it doesn't exist
+        os.makedirs(os.path.join(self.output_dir, "unknown_people"), exist_ok=True)
+        
+        # Save the latest/best face image
+        face_img = track_data['latest_frame']
+        cv2.imwrite(filepath, face_img)
+        
+        # Add to unknown people list
+        unknown_person = {
+            'id': unknown_id,
+            'filename': filename,
+            'filepath': filepath,
+            'timestamp': track_data['first_seen'].isoformat(),
+            'confirmed_timestamp': current_time.isoformat(),
+            'last_seen': current_time.isoformat(),
+            'tracking_duration': (current_time - track_data['first_seen']).total_seconds(),
+            'face_encoding': track_data['face_encoding'] if isinstance(track_data['face_encoding'], list) else track_data['face_encoding'],
+            'bbox': [int(x) for x in track_data['bbox']] if track_data['bbox'] else [0, 0, 0, 0],
+            'added_to_database': False
+        }
+        
+        self.unknown_people.append(unknown_person)
+        
+        # Keep only last 50 unknown people to prevent memory issues
+        if len(self.unknown_people) > 50:
+            # Remove oldest unknown person file
+            oldest = self.unknown_people.pop(0)
+            if os.path.exists(oldest['filepath']):
+                os.remove(oldest['filepath'])
+        
+        print(f"[INFO] ✅ Confirmed unknown person after 5-second tracking: {unknown_id}")
     
     def _check_compliance(self, detected_ppe):
         """Check PPE compliance"""
@@ -449,32 +534,95 @@ class SOasisServer:
         print("[INFO] Frame processing stopped")
     
     def _draw_detections(self, frame, people, ppe_items, compliance):
-        """Draw detection results on frame"""
-        # Draw people
-        for person in people:
-            x1, y1, x2, y2 = person['bbox']
-            color = (255, 0, 255)  # Magenta for faces
-            cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-            cv2.putText(frame, person['name'], (x1, y1 - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+        """Draw detection results on frame with badge-style display"""
+        frame_height, frame_width = frame.shape[:2]
         
-        # Draw PPE
+        # Draw people badges on the side instead of boxes around faces
+        badge_x = frame_width - 280  # Position badges on the right side
+        badge_y_start = 20
+        badge_height = 50
+        badge_spacing = 60
+        
+        for i, person in enumerate(people):
+            # Calculate badge position
+            badge_y = badge_y_start + (i * badge_spacing)
+            
+            # Determine colors based on person status
+            if person['name'] == "Unknown Person" or person['name'].startswith("Unknown #"):
+                badge_color = (0, 165, 255)  # Orange for unknown
+                text_color = (255, 255, 255)  # White text
+                status_text = "UNKNOWN"
+            else:
+                badge_color = (0, 200, 0)  # Green for known
+                text_color = (255, 255, 255)  # White text
+                status_text = "IDENTIFIED"
+            
+            # Draw badge background with rounded corners effect
+            cv2.rectangle(frame, (badge_x, badge_y), (badge_x + 260, badge_y + badge_height), badge_color, -1)
+            cv2.rectangle(frame, (badge_x, badge_y), (badge_x + 260, badge_y + badge_height), (255, 255, 255), 2)
+            
+            # Add person icon/avatar circle
+            avatar_center = (badge_x + 25, badge_y + 25)
+            cv2.circle(frame, avatar_center, 18, (255, 255, 255), -1)
+            cv2.circle(frame, avatar_center, 18, badge_color, 2)
+            
+            # Add person icon (simple representation)
+            cv2.circle(frame, (avatar_center[0], avatar_center[1] - 5), 6, badge_color, -1)  # Head
+            cv2.ellipse(frame, (avatar_center[0], avatar_center[1] + 8), (8, 10), 0, 0, 180, badge_color, -1)  # Body
+            
+            # Add person name (truncate if too long)
+            name = person['name']
+            if len(name) > 20:
+                name = name[:17] + "..."
+            
+            cv2.putText(frame, name, (badge_x + 55, badge_y + 20), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2)
+            
+            # Add status and confidence
+            confidence_text = f"{status_text} ({person['recognition_confidence']:.0f}%)"
+            cv2.putText(frame, confidence_text, (badge_x + 55, badge_y + 38), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.4, text_color, 1)
+            
+            # Draw subtle indicator line to face location (optional)
+            x1, y1, x2, y2 = person['bbox']
+            face_center = ((x1 + x2) // 2, (y1 + y2) // 2)
+            cv2.line(frame, face_center, (badge_x, badge_y + 25), badge_color, 1)
+            cv2.circle(frame, face_center, 3, badge_color, -1)
+        
+        # Draw PPE detections (keep boxes for equipment)
         for ppe in ppe_items:
             x1, y1, x2, y2 = ppe['bbox']
-            color = (0, 255, 0) if ppe['required'] else (0, 0, 255)  # Green for required, red for others
+            color = (0, 255, 0) if ppe['required'] else (255, 255, 0)  # Green for required, yellow for others
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             text = f"{ppe['label']} ({ppe['confidence']:.2f})"
-            cv2.putText(frame, text, (x1, y1 - 10), 
-                       cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
+            
+            # Add background for text readability
+            text_size = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 2)[0]
+            cv2.rectangle(frame, (x1, y1 - 25), (x1 + text_size[0] + 10, y1), color, -1)
+            cv2.putText(frame, text, (x1 + 5, y1 - 8), 
+                       cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 0), 2)
         
-        # Add status overlay
-        status_color = (0, 255, 0) if compliance['status'] == 'COMPLIANT' else (0, 0, 255)
+        # Add enhanced status overlay
+        status_y = 30
+        
+        # Status badge
+        status_color = (0, 200, 0) if compliance['status'] == 'COMPLIANT' else (0, 100, 255)
+        cv2.rectangle(frame, (10, 10), (300, 80), status_color, -1)
+        cv2.rectangle(frame, (10, 10), (300, 80), (255, 255, 255), 2)
+        
         cv2.putText(frame, f"Status: {compliance['status']}", 
-                   (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, status_color, 2)
-        cv2.putText(frame, f"People: {len(people)}", 
-                   (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
-        cv2.putText(frame, f"FPS: {self.system_stats['fps']:.1f}", 
-                   (10, 90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 2)
+                   (20, 35), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+        cv2.putText(frame, f"People: {len(people)} | FPS: {self.system_stats['fps']:.1f}", 
+                   (20, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+        
+        # Add tracking info if there are active tracks
+        active_tracks = len(self.unknown_tracking)
+        if active_tracks > 0:
+            tracking_y = 100
+            cv2.rectangle(frame, (10, tracking_y), (280, tracking_y + 30), (100, 100, 100), -1)
+            cv2.rectangle(frame, (10, tracking_y), (280, tracking_y + 30), (255, 255, 255), 1)
+            cv2.putText(frame, f"Tracking: {active_tracks} potential unknown", 
+                       (15, tracking_y + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
         
         return frame
     
@@ -924,7 +1072,7 @@ def get_live_logs():
 
 @app.route('/api/unknown-people')
 def get_unknown_people():
-    """Get list of detected unknown people"""
+    """Get list of detected unknown people with tracking information"""
     unknown_list = []
     for person in server.unknown_people:
         # Create web-accessible image data
@@ -932,17 +1080,45 @@ def get_unknown_people():
             with open(person['filepath'], 'rb') as f:
                 image_data = base64.b64encode(f.read()).decode('utf-8')
             
-            unknown_list.append({
+            person_data = {
                 'id': person['id'],
                 'timestamp': person['timestamp'],
                 'last_seen': person['last_seen'],
                 'image_data': image_data,
                 'added_to_database': person['added_to_database']
-            })
+            }
+            
+            # Add additional info if available
+            if 'confirmed_timestamp' in person:
+                person_data['confirmed_timestamp'] = person['confirmed_timestamp']
+            if 'tracking_duration' in person:
+                person_data['tracking_duration'] = person['tracking_duration']
+                
+            unknown_list.append(person_data)
         except Exception as e:
             print(f"[WARNING] Could not load image for {person['id']}: {e}")
     
-    return jsonify(unknown_list)
+    # Get tracking information for currently tracked potential unknowns
+    tracking_info = []
+    required_frames = DETECTION_CONFIG.get("unknown_tracking_frames", 20)
+    for track_id, track_data in server.unknown_tracking.items():
+        tracking_info.append({
+            'track_id': track_id,
+            'frame_count': track_data['frame_count'],
+            'required_frames': required_frames,
+            'progress': (track_data['frame_count'] / required_frames) * 100,
+            'first_seen': track_data['first_seen'].isoformat(),
+            'last_seen': track_data['last_seen'].isoformat(),
+            'estimated_time_remaining': max(0, (required_frames - track_data['frame_count']) * 0.25)  # Approximate seconds
+        })
+    
+    return jsonify({
+        'unknown_people': unknown_list,
+        'count': len(unknown_list),
+        'tracking': tracking_info,
+        'tracking_count': len(tracking_info),
+        'total_potential': len(unknown_list) + len(tracking_info)
+    })
 
 @app.route('/api/add-person', methods=['POST'])
 def add_person_to_database():

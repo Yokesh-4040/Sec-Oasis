@@ -210,6 +210,101 @@
         .mirror-video {
             transform: scaleX(-1);
         }
+        
+        /* Fixed overlay container to prevent page shake */
+        .video-overlay-container {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            pointer-events: none;
+            z-index: 10;
+        }
+        
+        /* Fixed badge container */
+        .badges-container {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 280px;
+            min-height: 400px;
+            pointer-events: none;
+            z-index: 20;
+        }
+        
+        /* Individual badge with smooth transitions */
+        .person-badge {
+            position: absolute;
+            width: 260px;
+            height: 50px;
+            transition: all 0.3s ease-in-out;
+            pointer-events: auto;
+            transform-origin: top right;
+        }
+        
+        /* Status overlay - fixed position */
+        .status-overlay {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 300px;
+            height: 80px;
+            pointer-events: none;
+            z-index: 20;
+        }
+        
+        /* Tracking info - fixed position */
+        .tracking-info {
+            position: absolute;
+            top: 100px;
+            left: 10px;
+            width: 280px;
+            height: 30px;
+            pointer-events: none;
+            z-index: 20;
+            transition: opacity 0.3s ease-in-out;
+        }
+        
+        /* Video container to maintain aspect ratio */
+        .video-container {
+            position: relative;
+            width: 100%;
+            max-width: 1200px;
+            margin: 0 auto;
+            background: #000;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+        
+        .video-container img {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+        
+        /* Smooth animations for badges */
+        .badge-enter {
+            opacity: 0;
+            transform: translateX(100%) scale(0.8);
+        }
+        
+        .badge-enter-active {
+            opacity: 1;
+            transform: translateX(0) scale(1);
+            transition: all 0.3s ease-out;
+        }
+        
+        .badge-exit {
+            opacity: 1;
+            transform: translateX(0) scale(1);
+        }
+        
+        .badge-exit-active {
+            opacity: 0;
+            transform: translateX(100%) scale(0.8);
+            transition: all 0.3s ease-in;
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -356,7 +451,16 @@
                 try {
                     const response = await fetch('/api/unknown-people');
                     const data = await response.json();
-                    setUnknownPeople(data);
+                    // Handle new API response format with tracking info
+                    setUnknownPeople(data.unknown_people || []);
+                    
+                    // Store tracking info if needed for future use
+                    if (data.tracking && data.tracking.length > 0) {
+                        console.log(`[INFO] Currently tracking ${data.tracking.length} potential unknown people`);
+                        data.tracking.forEach(track => {
+                            console.log(`[INFO] Track ${track.track_id}: ${track.frame_count}/${track.required_frames} frames (${track.progress.toFixed(1)}% complete)`);
+                        });
+                    }
                 } catch (error) {
                     console.error('Error fetching unknown people:', error);
                 }
@@ -591,12 +695,15 @@
                                     frame={currentFrame} 
                                     running={systemStatus.running}
                                     currentCamera={availableCameras.find(cam => cam.id === currentCamera)}
+                                    detections={systemStatus.detections || { people: [], ppe_items: [] }}
+                                    stats={systemStatus.stats || {}}
+                                    unknownPeople={unknownPeople}
                                 />
                             </div>
 
-                            {/* Detection Results */}
+                            {/* Detection Results - DISABLED for cleaner UI */}
                             <div className="space-y-6">
-                                <DetectionResults detections={systemStatus.detections} />
+                                {/* <DetectionResults detections={systemStatus.detections} /> */}
                                 <SystemStats stats={systemStatus.stats} />
                             </div>
                         </div>
@@ -759,7 +866,7 @@
         }
 
         // Live Feed Component
-        function LiveFeed({ frame, running, currentCamera }) {
+        function LiveFeed({ frame, running, currentCamera, detections = { people: [], ppe_items: [] }, stats = {}, unknownPeople = [] }) {
             return (
                 <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
@@ -776,13 +883,83 @@
                             </div>
                         )}
                     </div>
-                    <div className="frame-container bg-gray-900">
+                    <div className="video-container bg-gray-900">
                         {frame ? (
-                            <img 
-                                src={`data:image/jpeg;base64,${frame}`} 
-                                alt="Live Feed"
-                                className="w-full h-auto max-h-96 object-contain"
-                            />
+                            <>
+                                <img 
+                                    src={`data:image/jpeg;base64,${frame}`} 
+                                    alt="Live Feed"
+                                    className="w-full h-auto max-h-96 object-contain"
+                                />
+                                <div className="video-overlay-container">
+                                    {/* Status Overlay - Always fixed position */}
+                                    <div className="status-overlay">
+                                        <div className={`w-full h-full rounded-lg flex flex-col justify-center px-4 ${
+                                            detections.compliance_status === 'COMPLIANT' ? 'bg-green-600' : 
+                                            detections.compliance_status === 'NON-COMPLIANT' ? 'bg-red-600' : 
+                                            'bg-gray-600'
+                                        }`}>
+                                            <div className="text-white font-bold text-lg">
+                                                Status: {detections.compliance_status || 'UNKNOWN'}
+                                            </div>
+                                            <div className="text-white text-sm">
+                                                People: {detections.people?.length || 0} | FPS: {stats.fps?.toFixed(1) || '0.0'}
+                                            </div>
+                                        </div>
+                                    </div>
+                                    
+                                    {/* Tracking Info - DISABLED to fix layout issues */}
+                                    {/* <div className={`tracking-info ${unknownPeople.length > 0 ? 'opacity-100' : 'opacity-0'}`}>
+                                        <div className="w-full h-full bg-gray-700 bg-opacity-90 rounded-lg flex items-center px-3">
+                                            <div className="text-white text-sm">
+                                                Tracking: {unknownPeople.length} potential unknown
+                                            </div>
+                                        </div>
+                                    </div> */}
+                                    
+                                    {/* People Badges Container - Fixed positioning */}
+                                    <div className="badges-container">
+                                        {detections.people?.map((person, index) => {
+                                            const badgeStyle = {
+                                                top: (index * 60) + 'px',
+                                                zIndex: 30 + index
+                                            };
+                                            return (
+                                            <div 
+                                                key={person.name + '-' + index}
+                                                className="person-badge"
+                                                style={badgeStyle}
+                                            >
+                                                <div className={`w-full h-full rounded-lg flex items-center px-3 border-2 border-white ${
+                                                    person.name === "Unknown Person" || person.name.startsWith("Unknown #") 
+                                                        ? 'bg-orange-500' 
+                                                        : 'bg-green-500'
+                                                }`}>
+                                                    {/* Avatar Circle */}
+                                                    <div className="w-9 h-9 bg-white rounded-full flex items-center justify-center mr-3 flex-shrink-0">
+                                                        <div className={`w-6 h-6 rounded-full ${
+                                                            person.name === "Unknown Person" || person.name.startsWith("Unknown #") 
+                                                                ? 'bg-orange-500' 
+                                                                : 'bg-green-500'
+                                                        }`}></div>
+                                                    </div>
+                                                    
+                                                    {/* Text Content */}
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="text-white font-semibold text-sm truncate">
+                                                            {person.name.length > 18 ? person.name.slice(0, 15) + '...' : person.name}
+                                                        </div>
+                                                        <div className="text-white text-xs opacity-90">
+                                                            {person.name === "Unknown Person" || person.name.startsWith("Unknown #") ? 'UNKNOWN' : 'IDENTIFIED'} ({person.recognition_confidence?.toFixed(0) || 0}%)
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            );
+                                        })}
+                                    </div>
+                                </div>
+                            </>
                         ) : (
                             <div className="flex items-center justify-center h-96 text-gray-500">
                                 <div className="text-center">
@@ -825,18 +1002,7 @@
                         )}
                     </div>
 
-                    {/* People Detected */}
-                    <div className="mb-4">
-                        <h4 className="font-medium text-gray-700 mb-2">People Detected ({detections.people?.length || 0})</h4>
-                        <div className="space-y-2">
-                            {detections.people?.map((person, index) => (
-                                <div key={index} className="flex items-center justify-between p-2 bg-gray-50 rounded">
-                                    <span className="text-sm">{person.name}</span>
-                                    <span className="text-xs text-gray-500">ID: {index + 1}</span>
-                                </div>
-                            )) || <p className="text-gray-500 text-sm">No people detected</p>}
-                        </div>
-                    </div>
+                    {/* People are now shown as badges on the video overlay - no need to duplicate here */}
 
                     {/* PPE Items */}
                     <div>
@@ -2529,8 +2695,9 @@
             );
         }
 
-        // Render the app
-        ReactDOM.render(<PPEDashboard />, document.getElementById('root'));
+        // Render the app using React 18 createRoot
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<PPEDashboard />);
     </script>
 </body>
 </html> 

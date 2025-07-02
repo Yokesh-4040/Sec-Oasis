@@ -51,7 +51,7 @@ class OpenCVFaceRecognition:
             self.face_recognizer = None
     
     def detect_faces(self, frame):
-        """Detect faces in frame using OpenCV Haar cascade"""
+        """Detect faces in frame using OpenCV Haar cascade with NMS to eliminate duplicates"""
         if self.face_cascade is None:
             return []
         
@@ -59,24 +59,44 @@ class OpenCVFaceRecognition:
             # Convert to grayscale for face detection
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
             
-            # Detect faces
+            # Detect faces with more sensitive parameters
             faces_rect = self.face_cascade.detectMultiScale(
                 gray, 
                 scaleFactor=1.1, 
-                minNeighbors=5, 
+                minNeighbors=3,  # Reduced to detect more faces, we'll filter with NMS
                 minSize=(30, 30)
             )
             
-            faces = []
+            if len(faces_rect) == 0:
+                return []
+            
+            # Apply Non-Maximum Suppression to eliminate overlapping detections
+            boxes = []
+            confidences = []
+            
             for (x, y, w, h) in faces_rect:
-                # Convert to x, y, x1, y1 format
-                x1 = x + w
-                y1 = y + h
-                
-                faces.append({
-                    'bbox': [x, y, x1, y1],
-                    'confidence': 0.9  # Haar cascades don't provide confidence scores
-                })
+                boxes.append([x, y, w, h])
+                confidences.append(0.9)  # Assign default confidence
+            
+            # Convert to numpy arrays
+            boxes = np.array(boxes)
+            confidences = np.array(confidences)
+            
+            # Apply NMS
+            indices = cv2.dnn.NMSBoxes(boxes.tolist(), confidences.tolist(), 0.5, 0.4)
+            
+            faces = []
+            if len(indices) > 0:
+                for i in indices.flatten():
+                    x, y, w, h = boxes[i]
+                    # Convert to x, y, x1, y1 format
+                    x1 = x + w
+                    y1 = y + h
+                    
+                    faces.append({
+                        'bbox': [x, y, x1, y1],
+                        'confidence': 0.9  # Haar cascades don't provide confidence scores
+                    })
             
             return faces
         except Exception as e:

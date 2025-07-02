@@ -23,7 +23,9 @@ CAMERA_CONFIG = {
     "buffer_size": 1,
     "frame_skip": 3,
     "use_low_resolution": False,  # Use stream2 (lower res) for better performance
-    "detection_interval": 1,  # Process every N frames (1=every frame, 2=every other frame)
+    "detection_interval": 3,  # Process every N frames (1=every frame, 3=every 3rd frame for stability)
+    "frame_stabilization": True,  # Enable frame stabilization to reduce jitter
+    "min_face_size": 30,  # Minimum face size in pixels to reduce false detections
 }
 
 # Detection Configuration
@@ -35,6 +37,9 @@ DETECTION_CONFIG = {
     "log_interval": 30,
     "alert_cooldown": 30,
     "detect_unknown_people": True,  # Enable/disable unknown person detection
+    "unknown_tracking_frames": 20,  # Frames required for stable unknown detection (20 frames ≈ 5 seconds)
+    "unknown_position_threshold": 80,  # Pixel distance for tracking same person
+    "unknown_tracking_timeout": 10,  # Seconds to keep tracking data
     "unknown_detection_cooldown": 30,  # Seconds between same person detections
     "detect_ppe": True,  # Enable/disable safety equipment detection (faces only when False)
 }
