@@ -1,11 +1,11 @@
-# PPE Detection System with Web Dashboard
+# S-Oasis - Safety Monitoring System with Web Dashboard
 
 A real-time Personal Protective Equipment (PPE) detection system using AI and computer vision. Features a modern React-based web dashboard for monitoring workplace safety compliance.
 
 ## Features
 
 🎥 **Live Camera Feed** - Real-time monitoring via TP-Link Tapo C520 camera  
-🔍 **AI Detection** - YOLO-based PPE detection (Hardhat, Mask, Safety Vest)  
+🔍 **AI Detection** - YOLO-based safety equipment detection (Hardhat, Mask, Safety Vest)  
 👤 **Face Recognition** - Employee identification system  
 📊 **Web Dashboard** - Modern React interface with real-time updates  
 📝 **Compliance Logging** - Automated CSV logs with timestamps  

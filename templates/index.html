@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PPE Detection Dashboard</title>
+    <title>S-Oasis Dashboard</title>
     <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -122,6 +122,94 @@
         .modal-scrollable::-webkit-scrollbar-thumb:hover {
             background: #a0aec0;
         }
+        
+        /* Enhanced toggle switch styling */
+        .toggle-switch {
+            position: relative;
+            display: inline-block;
+            width: 44px;
+            height: 24px;
+        }
+        
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #e5e7eb;
+            transition: .4s;
+            border-radius: 24px;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.1);
+        }
+        
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 2px;
+            bottom: 2px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+        }
+        
+        .toggle-switch input:checked + .toggle-slider {
+            background-color: #3b82f6;
+        }
+        
+        .toggle-switch input:focus + .toggle-slider {
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.3);
+        }
+        
+        .toggle-switch input:checked + .toggle-slider:before {
+            transform: translateX(20px);
+        }
+        
+        /* Improved visibility for the existing peer-based toggles */
+        .peer:checked ~ .peer-checked\:bg-blue-600 {
+            background-color: #3b82f6 !important;
+        }
+        
+        .peer-checked\:after\:translate-x-full:checked ~ div:after {
+            transform: translateX(100%) !important;
+        }
+        
+        /* Additional toggle enhancement */
+        .toggle-slider:hover {
+            background-color: #d1d5db;
+        }
+        
+        .toggle-switch input:checked + .toggle-slider:hover {
+            background-color: #2563eb;
+        }
+        
+        .toggle-slider:before {
+            border: 1px solid #e5e7eb;
+        }
+        
+        /* Force visibility of toggle elements */
+        .toggle-switch,
+        .toggle-slider,
+        .toggle-slider:before {
+            visibility: visible !important;
+            opacity: 1 !important;
+            display: block !important;
+        }
+        
+        /* Mirror effect for camera video */
+        .mirror-video {
+            transform: scaleX(-1);
+        }
     </style>
 </head>
 <body class="bg-gray-100 font-sans">
@@ -139,11 +227,17 @@
             });
             const [currentFrame, setCurrentFrame] = useState(null);
             const [logs, setLogs] = useState([]);
+            const [liveLogs, setLiveLogs] = useState([]);
             const [config, setConfig] = useState(null);
             const [unknownPeople, setUnknownPeople] = useState([]);
             const [showAddPersonModal, setShowAddPersonModal] = useState(false);
             const [selectedUnknown, setSelectedUnknown] = useState(null);
             const [showSettingsModal, setShowSettingsModal] = useState(false);
+            const [availableCameras, setAvailableCameras] = useState([]);
+            const [currentCamera, setCurrentCamera] = useState('rtsp');
+            const [knownPeople, setKnownPeople] = useState([]);
+            const [showManagePeopleModal, setShowManagePeopleModal] = useState(false);
+            const [showAddPersonDirectModal, setShowAddPersonDirectModal] = useState(false);
             const socketRef = useRef(null);
 
             useEffect(() => {
@@ -180,12 +274,19 @@
                 fetchStatus();
                 fetchConfig();
                 fetchLogs();
+                fetchLiveLogs();
                 fetchUnknownPeople();
+                fetchCameras();
+                fetchKnownPeople();
+                
+                // Set up interval to fetch live logs every 2 seconds
+                const liveLogsInterval = setInterval(fetchLiveLogs, 2000);
 
                 return () => {
                     if (socketRef.current) {
                         socketRef.current.disconnect();
                     }
+                    clearInterval(liveLogsInterval);
                 };
             }, []);
 
@@ -219,6 +320,38 @@
                 }
             };
 
+            const fetchLiveLogs = async () => {
+                try {
+                    const response = await fetch('/api/logs/live');
+                    const data = await response.json();
+                    setLiveLogs(data);
+                } catch (error) {
+                    console.error('Error fetching live logs:', error);
+                }
+            };
+
+            const clearLogs = async () => {
+                if (!confirm('Are you sure you want to clear all logs? This action cannot be undone.')) {
+                    return;
+                }
+                
+                try {
+                    const response = await fetch('/api/logs/clear', { method: 'DELETE' });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setLogs([]);
+                        setLiveLogs([]);
+                        alert('Logs cleared successfully');
+                    } else {
+                        alert('Error clearing logs: ' + data.error);
+                    }
+                } catch (error) {
+                    console.error('Error clearing logs:', error);
+                    alert('Failed to clear logs');
+                }
+            };
+
             const fetchUnknownPeople = async () => {
                 try {
                     const response = await fetch('/api/unknown-people');
@@ -229,18 +362,66 @@
                 }
             };
 
-            const addPersonToDatabase = async (unknownId, name) => {
+            const fetchCameras = async () => {
+                try {
+                    const response = await fetch('/api/cameras');
+                    const data = await response.json();
+                    if (data.success) {
+                        setAvailableCameras(data.cameras);
+                        setCurrentCamera(data.current_camera);
+                    }
+                } catch (error) {
+                    console.error('Error fetching cameras:', error);
+                }
+            };
+
+            const fetchKnownPeople = async () => {
+                try {
+                    const response = await fetch('/api/known-people');
+                    const data = await response.json();
+                    if (data.success) {
+                        setKnownPeople(data.people);
+                    }
+                } catch (error) {
+                    console.error('Error fetching known people:', error);
+                }
+            };
+
+            const switchCamera = async (cameraId) => {
+                try {
+                    const response = await fetch('/api/camera/switch', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ camera_id: cameraId })
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        setCurrentCamera(cameraId);
+                        fetchStatus(); // Refresh status
+                        alert(data.message);
+                    } else {
+                        alert('Error: ' + data.message);
+                    }
+                } catch (error) {
+                    console.error('Error switching camera:', error);
+                    alert('Error switching camera');
+                }
+            };
+
+            const addPersonToDatabase = async (unknownId, name, action = 'new') => {
                 try {
                     const response = await fetch('/api/add-person', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ unknown_id: unknownId, name: name })
+                        body: JSON.stringify({ unknown_id: unknownId, name: name, action: action })
                     });
                     const data = await response.json();
                     
                     if (data.success) {
                         alert(data.message);
                         fetchUnknownPeople();
+                        fetchKnownPeople(); // Refresh known people list
                         setShowAddPersonModal(false);
                         setSelectedUnknown(null);
                     } else {
@@ -315,6 +496,46 @@
                 }
             };
 
+            const addPersonDirect = async (formData) => {
+                try {
+                    const response = await fetch('/api/add-person-direct', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        fetchKnownPeople();
+                        return { success: true, message: data.message };
+                    } else {
+                        return { success: false, message: data.message };
+                    }
+                } catch (error) {
+                    console.error('Error adding person directly:', error);
+                    return { success: false, message: 'Failed to add person' };
+                }
+            };
+
+            const addTrainingImageDirect = async (formData) => {
+                try {
+                    const response = await fetch('/api/add-training-image', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        fetchKnownPeople();
+                        return { success: true, message: data.message };
+                    } else {
+                        return { success: false, message: data.message };
+                    }
+                } catch (error) {
+                    console.error('Error adding training image:', error);
+                    return { success: false, message: 'Failed to add training image' };
+                }
+            };
+
             return (
                 <div className="min-h-screen bg-gray-100">
                     {/* Header */}
@@ -324,12 +545,25 @@
                                 <div className="flex items-center space-x-4">
                                     <i className="fas fa-hard-hat text-3xl"></i>
                                     <div>
-                                        <h1 className="text-2xl font-bold">PPE Detection System</h1>
+                                        <h1 className="text-2xl font-bold">S-Oasis</h1>
                                         <p className="text-blue-200">Real-time Safety Monitoring</p>
                                     </div>
                                 </div>
                                 <div className="flex items-center space-x-4">
                                     <SystemStatusIndicator status={systemStatus} />
+                                    <CameraSelector 
+                                        cameras={availableCameras}
+                                        currentCamera={currentCamera}
+                                        onSwitchCamera={switchCamera}
+                                    />
+                                    <button 
+                                        onClick={() => setShowManagePeopleModal(true)}
+                                        className="bg-green-600 hover:bg-green-700 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
+                                        title="Manage People Database"
+                                    >
+                                        <i className="fas fa-users"></i>
+                                        <span>Manage People</span>
+                                    </button>
                                     <button 
                                         onClick={() => setShowSettingsModal(true)}
                                         className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg flex items-center space-x-2 transition-colors"
@@ -353,7 +587,11 @@
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                             {/* Live Feed */}
                             <div className="lg:col-span-2">
-                                <LiveFeed frame={currentFrame} running={systemStatus.running} />
+                                <LiveFeed 
+                                    frame={currentFrame} 
+                                    running={systemStatus.running}
+                                    currentCamera={availableCameras.find(cam => cam.id === currentCamera)}
+                                />
                             </div>
 
                             {/* Detection Results */}
@@ -379,20 +617,27 @@
                             
                             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
                                 <ConfigDisplay config={config} />
-                                <LogsDisplay logs={logs} onRefresh={fetchLogs} />
+                                <LogsDisplay 
+                                    logs={logs} 
+                                    liveLogs={liveLogs}
+                                    onRefresh={fetchLogs} 
+                                    onRefreshLive={fetchLiveLogs}
+                                    onClear={clearLogs}
+                                />
                             </div>
                         </div>
                         
                         {/* Add Person Modal */}
                         {showAddPersonModal && selectedUnknown && (
-                            <AddPersonModal 
-                                unknown={selectedUnknown}
-                                onAdd={(name) => addPersonToDatabase(selectedUnknown.id, name)}
-                                onClose={() => {
-                                    setShowAddPersonModal(false);
-                                    setSelectedUnknown(null);
-                                }}
-                            />
+                                                            <AddPersonModal 
+                                    unknown={selectedUnknown}
+                                    knownPeople={knownPeople}
+                                    onAdd={(name, action) => addPersonToDatabase(selectedUnknown.id, name, action)}
+                                    onClose={() => {
+                                        setShowAddPersonModal(false);
+                                        setSelectedUnknown(null);
+                                    }}
+                                />
                         )}
                         
                         {/* Settings Modal */}
@@ -401,6 +646,42 @@
                                 config={config}
                                 onUpdate={updateDetectionSettings}
                                 onClose={() => setShowSettingsModal(false)}
+                            />
+                        )}
+
+                        {/* Manage People Modal */}
+                        {showManagePeopleModal && (
+                            <ManagePeopleModal 
+                                knownPeople={knownPeople}
+                                onAddNew={() => {
+                                    setShowManagePeopleModal(false);
+                                    setShowAddPersonDirectModal(true);
+                                }}
+                                onAddTraining={(personName) => {
+                                    setShowManagePeopleModal(false);
+                                    setShowAddPersonDirectModal(true);
+                                }}
+                                onClose={() => setShowManagePeopleModal(false)}
+                                onRefresh={fetchKnownPeople}
+                            />
+                        )}
+
+                        {/* Add Person Direct Modal */}
+                        {showAddPersonDirectModal && (
+                            <AddPersonDirectModal 
+                                knownPeople={knownPeople}
+                                onAdd={(formData, isTrainingImage) => {
+                                    if (isTrainingImage) {
+                                        return addTrainingImageDirect(formData);
+                                    } else {
+                                        return addPersonDirect(formData);
+                                    }
+                                }}
+                                onClose={() => setShowAddPersonDirectModal(false)}
+                                onSuccess={() => {
+                                    setShowAddPersonDirectModal(false);
+                                    fetchKnownPeople();
+                                }}
                             />
                         )}
                     </div>
@@ -426,6 +707,28 @@
                 <div className="flex items-center space-x-2">
                     <div className={`w-3 h-3 rounded-full ${getStatusColor()} ${status.running ? 'status-indicator' : ''}`}></div>
                     <span className="text-sm font-medium">{getStatusText()}</span>
+                </div>
+            );
+        }
+
+        // Camera Selector Component
+        function CameraSelector({ cameras, currentCamera, onSwitchCamera }) {
+            if (!cameras || cameras.length <= 1) return null;
+
+            return (
+                <div className="flex items-center space-x-2">
+                    <i className="fas fa-video text-blue-200"></i>
+                    <select 
+                        value={currentCamera}
+                        onChange={(e) => onSwitchCamera(e.target.value)}
+                        className="bg-blue-700 text-white border border-blue-600 rounded px-3 py-1 text-sm focus:outline-none focus:border-blue-400"
+                    >
+                        {cameras.map(camera => (
+                            <option key={camera.id} value={camera.id}>
+                                {camera.name}
+                            </option>
+                        ))}
+                    </select>
                 </div>
             );
         }
@@ -456,11 +759,16 @@
         }
 
         // Live Feed Component
-        function LiveFeed({ frame, running }) {
+        function LiveFeed({ frame, running, currentCamera }) {
             return (
                 <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
-                        <h2 className="text-xl font-bold text-gray-800">Live Camera Feed</h2>
+                        <div>
+                            <h2 className="text-xl font-bold text-gray-800">Live Camera Feed</h2>
+                            {currentCamera && (
+                                <p className="text-sm text-gray-600">{currentCamera.name}</p>
+                            )}
+                        </div>
                         {running && (
                             <div className="flex items-center space-x-2">
                                 <div className="w-2 h-2 bg-red-500 rounded-full live-indicator"></div>
@@ -609,33 +917,124 @@
         }
 
         // Logs Display Component
-        function LogsDisplay({ logs, onRefresh }) {
+        function LogsDisplay({ logs, liveLogs, onRefresh, onRefreshLive, onClear }) {
+            const [activeTab, setActiveTab] = useState('system');
+
             return (
                 <div className="bg-white rounded-xl shadow-lg p-6">
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-lg font-bold text-gray-800">Recent Logs</h3>
+                        <h3 className="text-lg font-bold text-gray-800">Detection Logs</h3>
+                        <div className="flex items-center space-x-2">
+                            <button 
+                                onClick={activeTab === 'system' ? onRefresh : onRefreshLive}
+                                className="text-blue-600 hover:text-blue-800 text-sm px-2 py-1 rounded"
+                                title="Refresh logs"
+                            >
+                                <i className="fas fa-refresh mr-1"></i>
+                                Refresh
+                            </button>
+                            <button 
+                                onClick={onClear}
+                                className="text-red-600 hover:text-red-800 text-sm px-2 py-1 rounded"
+                                title="Clear all logs"
+                            >
+                                <i className="fas fa-trash mr-1"></i>
+                                Clear
+                            </button>
+                        </div>
+                    </div>
+                    
+                    {/* Tab Navigation */}
+                    <div className="flex mb-4 border-b border-gray-200">
                         <button 
-                            onClick={onRefresh}
-                            className="text-blue-600 hover:text-blue-800 text-sm"
+                            onClick={() => setActiveTab('system')}
+                            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === 'system' 
+                                    ? 'text-blue-600 border-blue-600' 
+                                    : 'text-gray-500 border-transparent hover:text-gray-700'
+                            }`}
                         >
-                            <i className="fas fa-refresh mr-1"></i>
-                            Refresh
+                            System Logs ({logs.length})
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('live')}
+                            className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
+                                activeTab === 'live' 
+                                    ? 'text-blue-600 border-blue-600' 
+                                    : 'text-gray-500 border-transparent hover:text-gray-700'
+                            }`}
+                        >
+                            <div className="flex items-center space-x-2">
+                                <span>Live Detections ({liveLogs.length})</span>
+                                {liveLogs.length > 0 && (
+                                    <div className="w-2 h-2 bg-green-500 rounded-full live-indicator"></div>
+                                )}
+                            </div>
                         </button>
                     </div>
+
+                    {/* Tab Content */}
                     <div className="max-h-64 overflow-y-auto space-y-2">
-                        {logs.map((log, index) => (
-                            <div key={index} className="text-sm p-2 bg-gray-50 rounded">
-                                <div className="flex justify-between items-start mb-1">
-                                    <span className="font-medium">{log.people_detected || 'No people'}</span>
-                                    <span className={`px-2 py-1 rounded text-xs ${log.ppe_status === 'COMPLIANT' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`}>
-                                        {log.ppe_status}
-                                    </span>
+                        {activeTab === 'system' ? (
+                            logs.length > 0 ? logs.map((log, index) => (
+                                <div key={index} className="text-sm p-3 bg-gray-50 rounded-lg">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <span className="font-medium">{log.people_detected || 'No people'}</span>
+                                        <span className={`px-2 py-1 rounded text-xs font-medium ${
+                                            log.ppe_status === 'COMPLIANT' 
+                                                ? 'bg-green-100 text-green-800' 
+                                                : 'bg-red-100 text-red-800'
+                                        }`}>
+                                            {log.ppe_status}
+                                        </span>
+                                    </div>
+                                    {log.present_ppe && (
+                                        <div className="text-xs text-green-600 mb-1">
+                                            <i className="fas fa-check mr-1"></i>
+                                            Present: {log.present_ppe}
+                                        </div>
+                                    )}
+                                    {log.missing_ppe && (
+                                        <div className="text-xs text-red-600 mb-1">
+                                            <i className="fas fa-times mr-1"></i>
+                                            Missing: {log.missing_ppe}
+                                        </div>
+                                    )}
+                                    <div className="text-xs text-gray-500">
+                                        {new Date(log.timestamp).toLocaleString()}
+                                    </div>
                                 </div>
-                                <div className="text-xs text-gray-500">
-                                    {new Date(log.timestamp).toLocaleString()}
+                            )) : (
+                                <p className="text-gray-500 text-sm text-center py-4">No system logs available</p>
+                            )
+                        ) : (
+                            liveLogs.length > 0 ? liveLogs.slice().reverse().map((event, index) => (
+                                <div key={event.id} className="text-sm p-3 bg-blue-50 rounded-lg border-l-4 border-blue-400">
+                                    <div className="flex justify-between items-start mb-2">
+                                        <div className="flex items-center space-x-2">
+                                            <i className="fas fa-user text-blue-600"></i>
+                                            <span className="font-medium text-blue-800">{event.name}</span>
+                                        </div>
+                                        <span className="text-xs text-blue-600 font-medium">{event.time_display}</span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <div className="text-gray-600">
+                                            <span>Detection: {event.detection_confidence?.toFixed(1)}%</span>
+                                            <span className="ml-2">Recognition: {event.recognition_confidence?.toFixed(1)}%</span>
+                                        </div>
+                                        <span className="bg-blue-200 text-blue-800 px-2 py-1 rounded">
+                                            {event.event_type === 'face_detection' ? 'Face' : event.event_type}
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        )) || <p className="text-gray-500 text-sm">No logs available</p>}
+                            )) : (
+                                <p className="text-gray-500 text-sm text-center py-4">
+                                    No live detections yet
+                                    <br />
+                                    <span className="text-xs">Live events will appear here when people are detected</span>
+                                </p>
+                            )
+                        )}
                     </div>
                 </div>
             );
@@ -851,14 +1250,13 @@
                                             <p className="text-sm text-gray-600 max-w-xs">
                                                 Automatically detect and capture unknown people for database addition
                                             </p>
-                                            <label className="relative inline-flex items-center cursor-pointer ml-2">
+                                            <label className="toggle-switch">
                                                 <input 
                                                     type="checkbox"
                                                     checked={settings.detect_unknown_people}
                                                     onChange={(e) => setSettings({...settings, detect_unknown_people: e.target.checked})}
-                                                    className="sr-only peer"
                                                 />
-                                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                                <span className="toggle-slider"></span>
                                             </label>
                                         </div>
                                         
@@ -888,21 +1286,20 @@
                                     <div className="bg-white p-4 sm:p-6 rounded-xl border border-gray-200 shadow-sm">
                                         <h4 className="font-medium text-gray-800 mb-3 flex items-center">
                                             <i className="fas fa-hard-hat text-green-600 mr-2"></i>
-                                            PPE Detection Settings
+                                            Safety Detection Settings
                                         </h4>
                                         
                                         <div className="flex items-center justify-between mb-4">
                                             <p className="text-sm text-gray-600 max-w-xs">
-                                                Enable PPE detection (disable for face-only mode)
+                                                Enable safety equipment detection (disable for face-only mode)
                                             </p>
-                                            <label className="relative inline-flex items-center cursor-pointer ml-2">
+                                            <label className="toggle-switch">
                                                 <input 
                                                     type="checkbox"
                                                     checked={settings.detect_ppe}
                                                     onChange={(e) => setSettings({...settings, detect_ppe: e.target.checked})}
-                                                    className="sr-only peer"
                                                 />
-                                                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                                <span className="toggle-slider"></span>
                                             </label>
                                         </div>
                                         
@@ -989,14 +1386,13 @@
                                                     <p className="text-sm font-medium text-gray-700">Use Lower Resolution Stream</p>
                                                     <p className="text-xs text-gray-500">Better performance, lower quality</p>
                                                 </div>
-                                                <label className="relative inline-flex items-center cursor-pointer">
+                                                <label className="toggle-switch">
                                                     <input 
                                                         type="checkbox"
                                                         checked={settings.use_low_resolution}
                                                         onChange={(e) => setSettings({...settings, use_low_resolution: e.target.checked})}
-                                                        className="sr-only peer"
                                                     />
-                                                    <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-blue-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+                                                    <span className="toggle-slider"></span>
                                                 </label>
                                             </div>
                                             
@@ -1131,22 +1527,870 @@
             );
         }
 
-        // Add Person Modal Component
-        function AddPersonModal({ unknown, onAdd, onClose }) {
-            const [name, setName] = useState('');
+        // Manage People Modal Component
+        function ManagePeopleModal({ knownPeople, onAddNew, onAddTraining, onClose, onRefresh }) {
+            const [peopleStats, setPeopleStats] = useState({});
 
-            const handleSubmit = (e) => {
+            useEffect(() => {
+                // Simulate getting training image counts per person
+                const stats = {};
+                knownPeople.forEach(person => {
+                    // This would ideally come from an API call
+                    stats[person] = Math.floor(Math.random() * 3) + 1; // Mock data
+                });
+                setPeopleStats(stats);
+            }, [knownPeople]);
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200 flex-shrink-0">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-800">Manage People Database</h3>
+                                <p className="text-sm text-gray-600">Add new people or additional training images</p>
+                            </div>
+                            <button 
+                                onClick={onClose}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {/* Content */}
+                        <div className="p-6 overflow-y-auto flex-1 modal-scrollable">
+                            {/* Action Buttons */}
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                                <button
+                                    onClick={onAddNew}
+                                    className="bg-blue-600 hover:bg-blue-700 text-white p-4 rounded-lg transition-colors flex items-center space-x-3"
+                                >
+                                    <div className="bg-blue-500 p-2 rounded-full">
+                                        <i className="fas fa-user-plus text-xl"></i>
+                                    </div>
+                                    <div className="text-left">
+                                        <div className="font-semibold">Add New Person</div>
+                                        <div className="text-sm text-blue-100">Add someone new to the database</div>
+                                    </div>
+                                </button>
+
+                                <button
+                                    onClick={() => onAddTraining('')}
+                                    className="bg-green-600 hover:bg-green-700 text-white p-4 rounded-lg transition-colors flex items-center space-x-3"
+                                >
+                                    <div className="bg-green-500 p-2 rounded-full">
+                                        <i className="fas fa-camera text-xl"></i>
+                                    </div>
+                                    <div className="text-left">
+                                        <div className="font-semibold">Add Training Image</div>
+                                        <div className="text-sm text-green-100">Add more photos for existing people</div>
+                                    </div>
+                                </button>
+                            </div>
+
+                            {/* Current People */}
+                            <div className="mb-6">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4 flex items-center">
+                                    <i className="fas fa-users mr-2 text-gray-600"></i>
+                                    Current People ({knownPeople.length})
+                                </h4>
+                                
+                                {knownPeople.length > 0 ? (
+                                    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                                        {knownPeople.map((person, index) => (
+                                            <div key={index} className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                                                <div className="flex items-center justify-between mb-3">
+                                                    <div className="flex items-center space-x-3">
+                                                        <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-full flex items-center justify-center text-white font-semibold">
+                                                            {person.split(' ').map(n => n[0]).join('').toUpperCase()}
+                                                        </div>
+                                                        <div>
+                                                            <div className="font-medium text-gray-800">{person}</div>
+                                                            <div className="text-sm text-gray-500">
+                                                                {peopleStats[person] || 1} training image(s)
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <button
+                                                    onClick={() => onAddTraining(person)}
+                                                    className="w-full bg-white hover:bg-gray-100 border border-gray-300 text-gray-700 py-2 px-3 rounded text-sm transition-colors flex items-center justify-center space-x-2"
+                                                >
+                                                    <i className="fas fa-plus"></i>
+                                                    <span>Add Training Image</span>
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                ) : (
+                                    <div className="text-center py-8 text-gray-500">
+                                        <i className="fas fa-user-friends text-4xl mb-4 text-gray-300"></i>
+                                        <p className="text-lg">No people in database yet</p>
+                                        <p className="text-sm">Add your first person to get started</p>
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Tips */}
+                            <div className="bg-blue-50 rounded-lg p-4 border-l-4 border-blue-400">
+                                <h5 className="font-medium text-blue-800 mb-2">
+                                    <i className="fas fa-lightbulb mr-2"></i>
+                                    Training Tips for Better Recognition
+                                </h5>
+                                <ul className="text-sm text-blue-700 space-y-1">
+                                    <li>• Add 3-5 different photos per person for best accuracy</li>
+                                    <li>• Include different angles, expressions, and lighting conditions</li>
+                                    <li>• Use clear, high-quality images with visible faces</li>
+                                    <li>• Photos with glasses, hats, or other accessories help robustness</li>
+                                </ul>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-6 border-t border-gray-200 flex justify-between items-center flex-shrink-0">
+                            <button
+                                onClick={onRefresh}
+                                className="text-gray-600 hover:text-gray-800 flex items-center space-x-2"
+                            >
+                                <i className="fas fa-refresh"></i>
+                                <span>Refresh</span>
+                            </button>
+                            <button 
+                                onClick={onClose}
+                                className="bg-gray-500 hover:bg-gray-600 text-white py-2 px-6 rounded-lg transition-colors"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Camera Capture Component
+        function CameraCaptureModal({ onCapture, onClose }) {
+            const [stream, setStream] = useState(null);
+            const [capturedImages, setCapturedImages] = useState([]);
+            const [currentStep, setCurrentStep] = useState(0);
+            const [isCapturing, setIsCapturing] = useState(false);
+            const [countdown, setCountdown] = useState(0);
+            const videoRef = useRef(null);
+            const canvasRef = useRef(null);
+
+            const captureSteps = [
+                { 
+                    id: 'center', 
+                    title: 'Look Straight Ahead', 
+                    instruction: 'Look directly at the camera with a neutral expression',
+                    icon: 'fas fa-dot-circle'
+                },
+                { 
+                    id: 'left', 
+                    title: 'Turn Head Left', 
+                    instruction: 'Slowly turn your head to the left (about 30 degrees)',
+                    icon: 'fas fa-arrow-left'
+                },
+                { 
+                    id: 'right', 
+                    title: 'Turn Head Right', 
+                    instruction: 'Now turn your head to the right (about 30 degrees)',
+                    icon: 'fas fa-arrow-right'
+                },
+                { 
+                    id: 'up', 
+                    title: 'Tilt Head Up', 
+                    instruction: 'Tilt your head slightly upward',
+                    icon: 'fas fa-arrow-up'
+                },
+                { 
+                    id: 'down', 
+                    title: 'Tilt Head Down', 
+                    instruction: 'Tilt your head slightly downward',
+                    icon: 'fas fa-arrow-down'
+                }
+            ];
+
+            useEffect(() => {
+                startCamera();
+                return () => {
+                    if (stream) {
+                        stream.getTracks().forEach(track => track.stop());
+                    }
+                };
+            }, []);
+
+            const startCamera = async () => {
+                try {
+                    const mediaStream = await navigator.mediaDevices.getUserMedia({
+                        video: { 
+                            width: { ideal: 640 },
+                            height: { ideal: 480 },
+                            facingMode: 'user'
+                        },
+                        audio: false
+                    });
+                    setStream(mediaStream);
+                    if (videoRef.current) {
+                        videoRef.current.srcObject = mediaStream;
+                    }
+                } catch (error) {
+                    console.error('Error accessing camera:', error);
+                    alert('Could not access camera. Please check permissions.');
+                }
+            };
+
+            const startCountdown = () => {
+                setIsCapturing(true);
+                setCountdown(3);
+                
+                const countdownInterval = setInterval(() => {
+                    setCountdown(prev => {
+                        if (prev <= 1) {
+                            clearInterval(countdownInterval);
+                            capturePhoto();
+                            return 0;
+                        }
+                        return prev - 1;
+                    });
+                }, 1000);
+            };
+
+            const capturePhoto = () => {
+                const video = videoRef.current;
+                const canvas = canvasRef.current;
+                
+                if (video && canvas) {
+                    const context = canvas.getContext('2d');
+                    canvas.width = video.videoWidth;
+                    canvas.height = video.videoHeight;
+                    
+                    // Flip the image horizontally (mirror effect)
+                    context.translate(canvas.width, 0);
+                    context.scale(-1, 1);
+                    context.drawImage(video, 0, 0);
+                    
+                    canvas.toBlob((blob) => {
+                        const newImage = {
+                            id: captureSteps[currentStep].id,
+                            blob: blob,
+                            dataUrl: canvas.toDataURL('image/jpeg', 0.8)
+                        };
+                        
+                        setCapturedImages(prev => [...prev, newImage]);
+                        
+                        if (currentStep < captureSteps.length - 1) {
+                            setCurrentStep(prev => prev + 1);
+                        }
+                        
+                        setIsCapturing(false);
+                    }, 'image/jpeg', 0.8);
+                }
+            };
+
+            const retakePhoto = (stepIndex) => {
+                setCapturedImages(prev => prev.filter(img => img.id !== captureSteps[stepIndex].id));
+                setCurrentStep(stepIndex);
+            };
+
+            const finishCapture = () => {
+                if (capturedImages.length > 0) {
+                    // Use the center/first image as the primary one
+                    const primaryImage = capturedImages.find(img => img.id === 'center') || capturedImages[0];
+                    onCapture(primaryImage.blob, capturedImages);
+                }
+            };
+
+            const getCurrentStepImage = () => {
+                return capturedImages.find(img => img.id === captureSteps[currentStep].id);
+            };
+
+            const isAllCaptured = capturedImages.length === captureSteps.length;
+            const currentStepCaptured = getCurrentStepImage();
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-90 flex items-center justify-center p-4 z-60">
+                    <div className="bg-white rounded-xl max-w-4xl w-full max-h-[95vh] overflow-hidden flex flex-col">
+                        {/* Header */}
+                        <div className="flex items-center justify-between p-6 border-b border-gray-200">
+                            <div>
+                                <h3 className="text-xl font-bold text-gray-800">Camera Capture</h3>
+                                <p className="text-sm text-gray-600">
+                                    Step {currentStep + 1} of {captureSteps.length}: {captureSteps[currentStep].title}
+                                </p>
+                            </div>
+                            <button 
+                                onClick={onClose}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {/* Main Content */}
+                        <div className="flex flex-1 overflow-hidden">
+                            {/* Camera Section */}
+                            <div className="flex-1 flex flex-col items-center justify-center p-6 bg-gray-900 relative">
+                                {/* Video Feed */}
+                                <div className="relative mb-4">
+                                    <video 
+                                        ref={videoRef}
+                                        autoPlay 
+                                        playsInline
+                                        muted
+                                        className="w-96 h-72 object-cover rounded-lg border-4 border-white shadow-lg mirror-video"
+                                    />
+                                    
+                                    {/* Countdown Overlay */}
+                                    {countdown > 0 && (
+                                        <div className="absolute inset-0 flex items-center justify-center bg-black bg-opacity-50 rounded-lg">
+                                            <div className="text-6xl font-bold text-white animate-pulse">
+                                                {countdown}
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {/* Face Guide Overlay */}
+                                    <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <div className="w-48 h-64 border-2 border-dashed border-white opacity-50 rounded-full"></div>
+                                    </div>
+                                </div>
+
+                                {/* Instruction */}
+                                <div className="text-center text-white mb-4">
+                                    <div className="flex items-center justify-center mb-2">
+                                        <i className={`${captureSteps[currentStep].icon} text-3xl text-blue-400`}></i>
+                                    </div>
+                                    <h4 className="text-lg font-semibold mb-2">{captureSteps[currentStep].title}</h4>
+                                    <p className="text-sm text-gray-300">{captureSteps[currentStep].instruction}</p>
+                                </div>
+
+                                {/* Capture Button */}
+                                {!currentStepCaptured && (
+                                    <button
+                                        onClick={startCountdown}
+                                        disabled={isCapturing}
+                                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-blue-400 text-white px-8 py-3 rounded-full text-lg font-semibold transition-colors"
+                                    >
+                                        {isCapturing ? (
+                                            <><i className="fas fa-spinner fa-spin mr-2"></i>Capturing...</>
+                                        ) : (
+                                            <><i className="fas fa-camera mr-2"></i>Capture Photo</>
+                                        )}
+                                    </button>
+                                )}
+
+                                {currentStepCaptured && (
+                                    <div className="flex space-x-3">
+                                        <button
+                                            onClick={() => retakePhoto(currentStep)}
+                                            className="bg-yellow-600 hover:bg-yellow-700 text-white px-6 py-2 rounded-lg transition-colors"
+                                        >
+                                            <i className="fas fa-redo mr-2"></i>Retake
+                                        </button>
+                                        
+                                        {currentStep < captureSteps.length - 1 ? (
+                                            <button
+                                                onClick={() => setCurrentStep(prev => prev + 1)}
+                                                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors"
+                                            >
+                                                Next <i className="fas fa-arrow-right ml-2"></i>
+                                            </button>
+                                        ) : (
+                                            <button
+                                                onClick={finishCapture}
+                                                className="bg-green-600 hover:bg-green-700 text-white px-6 py-2 rounded-lg transition-colors"
+                                            >
+                                                <i className="fas fa-check mr-2"></i>Finish
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+
+                                <canvas ref={canvasRef} className="hidden" />
+                            </div>
+
+                            {/* Progress Section */}
+                            <div className="w-80 bg-gray-50 p-6 border-l border-gray-200 overflow-y-auto">
+                                <h4 className="text-lg font-semibold text-gray-800 mb-4">
+                                    <i className="fas fa-list-check mr-2"></i>
+                                    Capture Progress
+                                </h4>
+
+                                {/* Progress Steps */}
+                                <div className="space-y-4">
+                                    {captureSteps.map((step, index) => {
+                                        const captured = capturedImages.find(img => img.id === step.id);
+                                        const isCurrent = index === currentStep;
+                                        
+                                        return (
+                                            <div key={step.id} className={`p-3 rounded-lg border transition-colors ${
+                                                captured ? 'bg-green-50 border-green-200' :
+                                                isCurrent ? 'bg-blue-50 border-blue-200' : 'bg-gray-100 border-gray-200'
+                                            }`}>
+                                                <div className="flex items-center space-x-3">
+                                                    <div className={`w-8 h-8 rounded-full flex items-center justify-center ${
+                                                        captured ? 'bg-green-500 text-white' :
+                                                        isCurrent ? 'bg-blue-500 text-white' : 'bg-gray-300 text-gray-600'
+                                                    }`}>
+                                                        {captured ? (
+                                                            <i className="fas fa-check text-sm"></i>
+                                                        ) : (
+                                                            <i className={`${step.icon} text-sm`}></i>
+                                                        )}
+                                                    </div>
+                                                    <div className="flex-1">
+                                                        <div className={`font-medium ${
+                                                            captured ? 'text-green-800' :
+                                                            isCurrent ? 'text-blue-800' : 'text-gray-700'
+                                                        }`}>
+                                                            {step.title}
+                                                        </div>
+                                                        {captured && (
+                                                            <div className="text-xs text-green-600">✓ Captured</div>
+                                                        )}
+                                                        {isCurrent && !captured && (
+                                                            <div className="text-xs text-blue-600">→ Current</div>
+                                                        )}
+                                                    </div>
+                                                    {captured && (
+                                                        <button
+                                                            onClick={() => retakePhoto(index)}
+                                                            className="text-yellow-600 hover:text-yellow-700 text-sm"
+                                                            title="Retake this photo"
+                                                        >
+                                                            <i className="fas fa-redo"></i>
+                                                        </button>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                </div>
+
+                                {/* Captured Images Preview */}
+                                {capturedImages.length > 0 && (
+                                    <div className="mt-6">
+                                        <h5 className="text-sm font-medium text-gray-700 mb-3">Captured Images</h5>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            {capturedImages.map((img, index) => (
+                                                <div key={img.id} className="relative">
+                                                    <img 
+                                                        src={img.dataUrl} 
+                                                        alt={`Captured ${img.id}`}
+                                                        className="w-full h-20 object-cover rounded border"
+                                                    />
+                                                    <div className="absolute bottom-1 left-1 bg-black bg-opacity-70 text-white text-xs px-1 rounded">
+                                                        {captureSteps.find(s => s.id === img.id)?.title}
+                                                    </div>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Tips */}
+                                <div className="mt-6 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                                    <h6 className="text-sm font-medium text-yellow-800 mb-2">
+                                        <i className="fas fa-lightbulb mr-1"></i>Tips
+                                    </h6>
+                                    <ul className="text-xs text-yellow-700 space-y-1">
+                                        <li>• Keep your face centered in the oval guide</li>
+                                        <li>• Move slowly and hold each position</li>
+                                        <li>• Ensure good lighting on your face</li>
+                                        <li>• Remove glasses if possible for better detection</li>
+                                    </ul>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Footer */}
+                        <div className="p-4 border-t border-gray-200 bg-gray-50 flex justify-between items-center">
+                            <div className="text-sm text-gray-600">
+                                {capturedImages.length} of {captureSteps.length} photos captured
+                            </div>
+                            <div className="flex space-x-3">
+                                <button 
+                                    onClick={onClose}
+                                    className="bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                {isAllCaptured && (
+                                    <button 
+                                        onClick={finishCapture}
+                                        className="bg-blue-600 hover:bg-blue-700 text-white py-2 px-6 rounded-lg transition-colors"
+                                    >
+                                        <i className="fas fa-check mr-2"></i>Use Photos
+                                    </button>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        // Add Person Direct Modal Component  
+        function AddPersonDirectModal({ knownPeople, onAdd, onClose, onSuccess }) {
+            const [mode, setMode] = useState('new'); // 'new' or 'training'
+            const [selectedPerson, setSelectedPerson] = useState('');
+            const [personName, setPersonName] = useState('');
+            const [selectedFile, setSelectedFile] = useState(null);
+            const [preview, setPreview] = useState(null);
+            const [uploading, setUploading] = useState(false);
+            const [captureMode, setCaptureMode] = useState('upload'); // 'upload' or 'camera'
+            const [showCameraCapture, setShowCameraCapture] = useState(false);
+            const fileInputRef = useRef(null);
+
+            const handleFileSelect = (event) => {
+                const file = event.target.files[0];
+                if (file) {
+                    setSelectedFile(file);
+                    
+                    // Create preview
+                    const reader = new FileReader();
+                    reader.onload = (e) => setPreview(e.target.result);
+                    reader.readAsDataURL(file);
+                }
+            };
+
+            const handleCameraCapture = (primaryBlob, allImages) => {
+                // Store all captured images for potential batch upload
+                setSelectedFile({ primary: primaryBlob, all: allImages });
+                
+                // Create preview from the primary image
+                const reader = new FileReader();
+                reader.onload = (e) => setPreview(e.target.result);
+                reader.readAsDataURL(primaryBlob);
+                
+                setShowCameraCapture(false);
+            };
+
+            const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (name.trim()) {
-                    onAdd(name.trim());
+                
+                if (!selectedFile) {
+                    alert('Please select an image');
+                    return;
+                }
+
+                if (mode === 'new' && !personName.trim()) {
+                    alert('Please enter a person name');
+                    return;
+                }
+
+                if (mode === 'training' && !selectedPerson) {
+                    alert('Please select a person');
+                    return;
+                }
+
+                setUploading(true);
+
+                try {
+                    const formData = new FormData();
+                    const name = mode === 'new' ? personName.trim() : selectedPerson;
+                    
+                    // Check if it's camera capture with multiple images
+                    if (captureMode === 'camera' && selectedFile.all && selectedFile.all.length > 1) {
+                        // Upload multiple images from camera capture
+                        formData.append('name', name);
+                        selectedFile.all.forEach((img, index) => {
+                            formData.append(`image_${index}`, img.blob, `${name}_${img.id}.jpg`);
+                        });
+                        
+                        const response = await fetch('/api/add-multiple-training-images', {
+                            method: 'POST',
+                            body: formData
+                        });
+                        const result = await response.json();
+                        
+                        if (result.success) {
+                            alert(result.message);
+                            onSuccess();
+                        } else {
+                            alert('Error: ' + result.message);
+                        }
+                    } else {
+                        // Single image upload (either file upload or single camera capture)
+                        const imageFile = selectedFile.primary || selectedFile;
+                        formData.append('image', imageFile);
+                        formData.append('name', name);
+
+                        const result = await onAdd(formData, mode === 'training');
+                        
+                        if (result.success) {
+                            alert(result.message);
+                            onSuccess();
+                        } else {
+                            alert('Error: ' + result.message);
+                        }
+                    }
+                } catch (error) {
+                    alert('Failed to upload image');
+                } finally {
+                    setUploading(false);
                 }
             };
 
             return (
                 <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
-                    <div className="bg-white rounded-xl max-w-md w-full p-6 modal-content">
+                    <div className="bg-white rounded-xl max-w-lg w-full p-6">
+                        <div className="flex items-center justify-between mb-6">
+                            <h3 className="text-lg font-bold text-gray-800">
+                                {mode === 'new' ? 'Add New Person' : 'Add Training Image'}
+                            </h3>
+                            <button 
+                                onClick={onClose}
+                                className="text-gray-500 hover:text-gray-700"
+                            >
+                                <i className="fas fa-times text-xl"></i>
+                            </button>
+                        </div>
+
+                        {/* Mode Selection */}
+                        <div className="mb-6">
+                            <div className="flex space-x-4">
+                                <button
+                                    onClick={() => setMode('new')}
+                                    className={`flex-1 p-3 rounded-lg border transition-colors ${
+                                        mode === 'new' 
+                                            ? 'bg-blue-50 border-blue-500 text-blue-700' 
+                                            : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                >
+                                    <i className="fas fa-user-plus mr-2"></i>
+                                    New Person
+                                </button>
+                                <button
+                                    onClick={() => setMode('training')}
+                                    className={`flex-1 p-3 rounded-lg border transition-colors ${
+                                        mode === 'training' 
+                                            ? 'bg-green-50 border-green-500 text-green-700' 
+                                            : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'
+                                    }`}
+                                >
+                                    <i className="fas fa-camera mr-2"></i>
+                                    Training Image
+                                </button>
+                            </div>
+                        </div>
+
+                        <form onSubmit={handleSubmit}>
+                            {/* Person Selection/Input */}
+                            {mode === 'new' ? (
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Person Name
+                                    </label>
+                                    <input 
+                                        type="text"
+                                        value={personName}
+                                        onChange={(e) => setPersonName(e.target.value)}
+                                        placeholder="Enter full name..."
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        required
+                                    />
+                                </div>
+                            ) : (
+                                <div className="mb-4">
+                                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                                        Select Person
+                                    </label>
+                                    {knownPeople.length > 0 ? (
+                                        <select 
+                                            value={selectedPerson}
+                                            onChange={(e) => setSelectedPerson(e.target.value)}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                            required
+                                        >
+                                            <option value="">Choose a person...</option>
+                                            {knownPeople.map((person, index) => (
+                                                <option key={index} value={person}>{person}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <p className="text-gray-500 text-sm p-3 bg-gray-100 rounded">
+                                            No people in database. Add a new person first.
+                                        </p>
+                                    )}
+                                </div>
+                            )}
+
+                            {/* Image Source Selection */}
+                            <div className="mb-4">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    How would you like to add the image?
+                                </label>
+                                <div className="flex space-x-4">
+                                    <button
+                                        type="button"
+                                        onClick={() => setCaptureMode('upload')}
+                                        className={`flex-1 p-3 rounded-lg border transition-colors ${
+                                            captureMode === 'upload' 
+                                                ? 'bg-blue-50 border-blue-500 text-blue-700' 
+                                                : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <i className="fas fa-cloud-upload-alt mr-2"></i>
+                                        Upload from Device
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={() => setCaptureMode('camera')}
+                                        className={`flex-1 p-3 rounded-lg border transition-colors ${
+                                            captureMode === 'camera' 
+                                                ? 'bg-green-50 border-green-500 text-green-700' 
+                                                : 'bg-gray-50 border-gray-300 text-gray-600 hover:bg-gray-100'
+                                        }`}
+                                    >
+                                        <i className="fas fa-camera mr-2"></i>
+                                        Take Photos
+                                    </button>
+                                </div>
+                            </div>
+
+                            {/* Image Upload/Capture */}
+                            <div className="mb-6">
+                                <label className="block text-sm font-medium text-gray-700 mb-2">
+                                    {captureMode === 'upload' ? 'Upload Image' : 'Capture Photos'}
+                                </label>
+                                
+                                {captureMode === 'upload' ? (
+                                    <div 
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="border-2 border-dashed border-gray-300 rounded-lg p-6 text-center cursor-pointer hover:border-gray-400 transition-colors"
+                                    >
+                                        {preview ? (
+                                            <div className="space-y-3">
+                                                <img 
+                                                    src={preview} 
+                                                    alt="Preview" 
+                                                    className="max-h-32 mx-auto rounded"
+                                                />
+                                                <p className="text-sm text-gray-600">Click to change image</p>
+                                            </div>
+                                        ) : (
+                                            <div className="space-y-3">
+                                                <i className="fas fa-cloud-upload-alt text-3xl text-gray-400"></i>
+                                                <div>
+                                                    <p className="text-sm text-gray-600">Click to upload an image</p>
+                                                    <p className="text-xs text-gray-500">JPG, PNG, or BMP files</p>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                ) : (
+                                    <div>
+                                        {preview ? (
+                                            <div className="space-y-4">
+                                                <div className="border-2 border-green-300 rounded-lg p-4 bg-green-50">
+                                                    <img 
+                                                        src={preview} 
+                                                        alt="Captured Preview" 
+                                                        className="max-h-32 mx-auto rounded"
+                                                    />
+                                                    <p className="text-sm text-green-700 text-center mt-2">
+                                                        ✓ Photos captured successfully
+                                                    </p>
+                                                </div>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => setShowCameraCapture(true)}
+                                                    className="w-full bg-green-600 hover:bg-green-700 text-white py-2 px-4 rounded-lg transition-colors"
+                                                >
+                                                    <i className="fas fa-camera mr-2"></i>Retake Photos
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button
+                                                type="button"
+                                                onClick={() => setShowCameraCapture(true)}
+                                                className="w-full border-2 border-dashed border-green-300 rounded-lg p-6 text-center cursor-pointer hover:border-green-400 transition-colors bg-green-50"
+                                            >
+                                                <div className="space-y-3">
+                                                    <i className="fas fa-camera text-3xl text-green-600"></i>
+                                                    <div>
+                                                        <p className="text-sm text-green-700 font-medium">Click to start camera capture</p>
+                                                        <p className="text-xs text-green-600">Guided photo session with multiple angles</p>
+                                                    </div>
+                                                </div>
+                                            </button>
+                                        )}
+                                    </div>
+                                )}
+                                
+                                <input 
+                                    ref={fileInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    onChange={handleFileSelect}
+                                    className="hidden"
+                                />
+                            </div>
+
+                            {/* Submit Buttons */}
+                            <div className="flex space-x-3">
+                                <button 
+                                    type="button"
+                                    onClick={onClose}
+                                    className="flex-1 bg-gray-500 hover:bg-gray-600 text-white py-2 px-4 rounded-lg transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button 
+                                    type="submit"
+                                    disabled={uploading}
+                                    className={`flex-1 py-2 px-4 rounded-lg transition-colors text-white ${
+                                        mode === 'new' 
+                                            ? 'bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300' 
+                                            : 'bg-green-600 hover:bg-green-700 disabled:bg-green-300'
+                                    }`}
+                                >
+                                    {uploading ? (
+                                        <><i className="fas fa-spinner fa-spin mr-2"></i>Uploading...</>
+                                    ) : mode === 'new' ? (
+                                        <><i className="fas fa-user-plus mr-2"></i>Add Person</>
+                                    ) : (
+                                        <><i className="fas fa-camera mr-2"></i>Add Training Image</>
+                                    )}
+                                </button>
+                            </div>
+                        </form>
+
+                        {/* Camera Capture Modal */}
+                        {showCameraCapture && (
+                            <CameraCaptureModal 
+                                onCapture={handleCameraCapture}
+                                onClose={() => setShowCameraCapture(false)}
+                            />
+                        )}
+                    </div>
+                </div>
+            );
+        }
+
+        // Add Person Modal Component
+        function AddPersonModal({ unknown, knownPeople, onAdd, onClose }) {
+            const [name, setName] = useState('');
+            const [action, setAction] = useState('new');
+            const [selectedPerson, setSelectedPerson] = useState('');
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                if (action === 'new' && name.trim()) {
+                    onAdd(name.trim(), 'new');
+                } else if (action === 'existing' && selectedPerson) {
+                    onAdd(selectedPerson, 'existing');
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
+                    <div className="bg-white rounded-xl max-w-lg w-full p-6 modal-content">
                         <div className="flex items-center justify-between mb-4">
-                            <h3 className="text-lg font-bold text-gray-800">Add New Person</h3>
+                            <h3 className="text-lg font-bold text-gray-800">Identify Unknown Person</h3>
                             <button 
                                 onClick={onClose}
                                 className="text-gray-500 hover:text-gray-700"
@@ -1155,7 +2399,7 @@
                             </button>
                         </div>
                         
-                        <div className="mb-4">
+                        <div className="mb-6">
                             <div className="aspect-square w-32 mx-auto rounded-lg overflow-hidden bg-gray-200 mb-4">
                                 <img 
                                     src={`data:image/jpeg;base64,${unknown.image_data}`}
@@ -1167,23 +2411,94 @@
                                 First detected: {new Date(unknown.timestamp).toLocaleString()}
                             </p>
                         </div>
+
+                        {/* Action Selection */}
+                        <div className="mb-6">
+                            <p className="text-sm font-medium text-gray-700 mb-3">Choose an action:</p>
+                            <div className="space-y-3">
+                                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input 
+                                        type="radio"
+                                        name="action"
+                                        value="existing"
+                                        checked={action === 'existing'}
+                                        onChange={(e) => setAction(e.target.value)}
+                                        className="mr-3"
+                                    />
+                                    <div>
+                                        <div className="font-medium text-green-700">
+                                            <i className="fas fa-link mr-2"></i>
+                                            Link to existing person
+                                        </div>
+                                        <div className="text-sm text-gray-600">
+                                            Add this as another training image for someone already in the database
+                                        </div>
+                                    </div>
+                                </label>
+
+                                <label className="flex items-center p-3 border rounded-lg cursor-pointer hover:bg-gray-50">
+                                    <input 
+                                        type="radio"
+                                        name="action"
+                                        value="new"
+                                        checked={action === 'new'}
+                                        onChange={(e) => setAction(e.target.value)}
+                                        className="mr-3"
+                                    />
+                                    <div>
+                                        <div className="font-medium text-blue-700">
+                                            <i className="fas fa-user-plus mr-2"></i>
+                                            Create new person
+                                        </div>
+                                        <div className="text-sm text-gray-600">
+                                            Add this person as a new entry in the database
+                                        </div>
+                                    </div>
+                                </label>
+                            </div>
+                        </div>
                         
                         <form onSubmit={handleSubmit}>
-                            <div className="mb-4">
-                                <label htmlFor="personName" className="block text-sm font-medium text-gray-700 mb-2">
-                                    Person's Name
-                                </label>
-                                <input 
-                                    type="text"
-                                    id="personName"
-                                    value={name}
-                                    onChange={(e) => setName(e.target.value)}
-                                    placeholder="Enter full name..."
-                                    className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                                    required
-                                    autoFocus
-                                />
-                            </div>
+                            {action === 'existing' ? (
+                                <div className="mb-4">
+                                    <label htmlFor="existingPerson" className="block text-sm font-medium text-gray-700 mb-2">
+                                        Select existing person
+                                    </label>
+                                    {knownPeople && knownPeople.length > 0 ? (
+                                        <select 
+                                            id="existingPerson"
+                                            value={selectedPerson}
+                                            onChange={(e) => setSelectedPerson(e.target.value)}
+                                            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-green-500"
+                                            required
+                                        >
+                                            <option value="">Choose a person...</option>
+                                            {knownPeople.map((person, index) => (
+                                                <option key={index} value={person}>{person}</option>
+                                            ))}
+                                        </select>
+                                    ) : (
+                                        <p className="text-gray-500 text-sm p-3 bg-gray-100 rounded">
+                                            No known people found. Create a new person instead.
+                                        </p>
+                                    )}
+                                </div>
+                            ) : (
+                                <div className="mb-4">
+                                    <label htmlFor="personName" className="block text-sm font-medium text-gray-700 mb-2">
+                                        Person's Name
+                                    </label>
+                                    <input 
+                                        type="text"
+                                        id="personName"
+                                        value={name}
+                                        onChange={(e) => setName(e.target.value)}
+                                        placeholder="Enter full name..."
+                                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                        required
+                                    />
+                                </div>
+                            )}
                             
                             <div className="flex space-x-3">
                                 <button 
@@ -1195,9 +2510,17 @@
                                 </button>
                                 <button 
                                     type="submit"
-                                    className="flex-1 bg-blue-600 hover:bg-blue-700 text-white py-2 px-4 rounded-lg transition-colors"
+                                    className={`flex-1 py-2 px-4 rounded-lg transition-colors text-white ${
+                                        action === 'existing' 
+                                            ? 'bg-green-600 hover:bg-green-700' 
+                                            : 'bg-blue-600 hover:bg-blue-700'
+                                    }`}
                                 >
-                                    Add to Database
+                                    {action === 'existing' ? (
+                                        <><i className="fas fa-link mr-2"></i>Link Person</>
+                                    ) : (
+                                        <><i className="fas fa-user-plus mr-2"></i>Add New Person</>
+                                    )}
                                 </button>
                             </div>
                         </form>

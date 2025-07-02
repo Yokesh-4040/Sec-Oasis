@@ -13,18 +13,30 @@ from datetime import datetime
 import os
 import csv
 from ultralytics import YOLO
-import face_recognition
+try:
+    from opencv_face_recognition import OpenCVFaceRecognition
+    FACE_RECOGNITION_AVAILABLE = True
+    opencv_face_rec = OpenCVFaceRecognition()
+    if not opencv_face_rec.is_available():
+        print("[WARNING] OpenCV face recognition models not found")
+        FACE_RECOGNITION_AVAILABLE = False
+    else:
+        print("[INFO] OpenCV face recognition module loaded successfully")
+except ImportError as e:
+    print(f"[WARNING] Face recognition not available: {e}")
+    FACE_RECOGNITION_AVAILABLE = False
+    opencv_face_rec = None
 from camera_config import *
 from onvif import ONVIFCamera
 
 app = Flask(__name__)
-app.config['SECRET_KEY'] = 'ppe_detection_secret'
+app.config['SECRET_KEY'] = 's_oasis_secret'
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-class PPEDetectionServer:
+class SOasisServer:
     def __init__(self):
-        print("[INFO] Initializing PPE Detection Server...")
+        print("[INFO] Initializing S-Oasis Server...")
         
         # Load YOLO model
         self.model = YOLO(PATHS["model_path"])
@@ -50,6 +62,7 @@ class PPEDetectionServer:
             'stats': {'total_people': 0, 'compliant_people': 0}
         }
         self.unknown_people = []  # Store unknown person detections
+        self.live_detection_events = []  # Store live detection events
         self.system_stats = {
             'frames_processed': 0,
             'start_time': None,
@@ -57,17 +70,53 @@ class PPEDetectionServer:
             'connection_status': 'Disconnected'
         }
         
+        # Camera management
+        self.current_camera_type = "rtsp"  # Default to RTSP camera
+        self.available_cameras = self._detect_available_cameras()
+        
         # Threading
         self.frame_queue = queue.Queue(maxsize=10)
         self.capture_thread = None
         self.processing_thread = None
         
-        print("[INFO] PPE Detection Server initialized")
+        print("[INFO] S-Oasis Server initialized")
         
         # Initialize camera control
         self.onvif_camera = None
         self._init_camera_control()
     
+    def _detect_available_cameras(self):
+        """Detect available cameras (built-in and RTSP)"""
+        cameras = []
+        
+        # Check for built-in Mac camera
+        try:
+            cap = cv2.VideoCapture(0)
+            if cap.isOpened():
+                ret, frame = cap.read()
+                if ret:
+                    cameras.append({
+                        'id': 'builtin',
+                        'name': 'Built-in Camera',
+                        'type': 'usb',
+                        'index': 0
+                    })
+                    print("[INFO] Built-in camera detected")
+            cap.release()
+        except Exception as e:
+            print(f"[WARNING] Could not detect built-in camera: {e}")
+        
+        # Add RTSP camera (always available in config)
+        cameras.append({
+            'id': 'rtsp',
+            'name': f'RTSP Camera ({CAMERA_CONFIG["ip"]})',
+            'type': 'rtsp',
+            'url': f"rtsp://{CAMERA_CONFIG['username']}:{CAMERA_CONFIG['password']}@{CAMERA_CONFIG['ip']}:{CAMERA_CONFIG['rtsp_port']}/{CAMERA_CONFIG['stream_path']}"
+        })
+        
+        print(f"[INFO] Available cameras: {[cam['name'] for cam in cameras]}")
+        return cameras
+
     def _init_camera_control(self):
         """Initialize ONVIF camera control"""
         try:
@@ -92,45 +141,59 @@ class PPEDetectionServer:
     
     def _load_employee_faces(self):
         """Load known employee faces for recognition"""
+        if not FACE_RECOGNITION_AVAILABLE or opencv_face_rec is None:
+            print("[WARNING] Face recognition disabled - OpenCV models not available")
+            return
+            
         dataset_dir = PATHS["employee_faces"]
         if not os.path.exists(dataset_dir):
             print(f"[WARNING] Employee faces directory not found: {dataset_dir}")
             return
         
-        for filename in os.listdir(dataset_dir):
-            if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
-                filepath = os.path.join(dataset_dir, filename)
-                try:
-                    image = face_recognition.load_image_file(filepath)
-                    encodings = face_recognition.face_encodings(image)
-                    if encodings:
-                        self.known_encodings.append(encodings[0])
-                        name = os.path.splitext(filename)[0]
-                        self.known_names.append(name)
-                        print(f"[INFO] Loaded face encoding for: {name}")
-                except Exception as e:
-                    print(f"[WARNING] Could not load {filename}: {e}")
+        # Try to load existing model first
+        if opencv_face_rec.load_model():
+            print("[INFO] Loaded existing face recognition model")
+            return
+        
+        # Load and train new model
+        num_faces = opencv_face_rec.load_known_faces(dataset_dir)
+        if num_faces > 0:
+            print(f"[INFO] Loaded and trained face recognition with {num_faces} faces")
+        else:
+            print("[WARNING] No faces found in dataset directory")
     
     def _capture_frames(self):
-        """Capture frames from RTSP stream"""
-        rtsp_url = f"rtsp://{CAMERA_CONFIG['username']}:{CAMERA_CONFIG['password']}@{CAMERA_CONFIG['ip']}:{CAMERA_CONFIG['rtsp_port']}/{CAMERA_CONFIG['stream_path']}"
-        
-        print(f"[INFO] Connecting to RTSP stream: {rtsp_url.replace(CAMERA_CONFIG['password'], '***')}")
-        
-        # Try different backends
-        backends_to_try = [cv2.CAP_FFMPEG, cv2.CAP_ANY]
+        """Capture frames from selected camera source"""
         cap = None
         
-        for backend in backends_to_try:
-            cap = cv2.VideoCapture(rtsp_url, backend)
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_CONFIG['buffer_size'])
+        if self.current_camera_type == "rtsp":
+            # RTSP Camera
+            rtsp_url = f"rtsp://{CAMERA_CONFIG['username']}:{CAMERA_CONFIG['password']}@{CAMERA_CONFIG['ip']}:{CAMERA_CONFIG['rtsp_port']}/{CAMERA_CONFIG['stream_path']}"
+            print(f"[INFO] Connecting to RTSP stream: {rtsp_url.replace(CAMERA_CONFIG['password'], '***')}")
+            
+            # Try different backends for RTSP
+            backends_to_try = [cv2.CAP_FFMPEG, cv2.CAP_ANY]
+            for backend in backends_to_try:
+                cap = cv2.VideoCapture(rtsp_url, backend)
+                cap.set(cv2.CAP_PROP_BUFFERSIZE, CAMERA_CONFIG['buffer_size'])
+                if cap.isOpened():
+                    print(f"[INFO] Connected to RTSP with backend: {backend}")
+                    break
+                cap.release()
+        
+        elif self.current_camera_type == "builtin":
+            # Built-in Camera
+            print("[INFO] Connecting to built-in camera...")
+            cap = cv2.VideoCapture(0)
             if cap.isOpened():
-                print(f"[INFO] Connected with backend: {backend}")
-                break
-            cap.release()
+                print("[INFO] Connected to built-in camera")
+                # Set some basic properties for built-in camera
+                cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+                cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+                cap.set(cv2.CAP_PROP_FPS, 30)
         
         if not cap or not cap.isOpened():
-            print("[ERROR] Failed to connect to RTSP stream")
+            print(f"[ERROR] Failed to connect to {self.current_camera_type} camera")
             self.system_stats['connection_status'] = 'Failed'
             return
         
@@ -144,7 +207,10 @@ class PPEDetectionServer:
                 continue
             
             frame_count += 1
-            if frame_count % CAMERA_CONFIG['frame_skip'] == 0:
+            # For built-in camera, process every frame; for RTSP, use frame skip
+            frame_skip = 1 if self.current_camera_type == "builtin" else CAMERA_CONFIG['frame_skip']
+            
+            if frame_count % frame_skip == 0:
                 if not self.frame_queue.full():
                     self.frame_queue.put(frame.copy())
                     self.current_frame = frame.copy()
@@ -156,30 +222,42 @@ class PPEDetectionServer:
         """Process PPE and face detection"""
         # Face recognition
         detected_people = []
-        if self.known_encodings:
-            rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            face_locations = face_recognition.face_locations(rgb, model=DETECTION_CONFIG["face_model"])
-            face_encodings = face_recognition.face_encodings(rgb, face_locations)
-            
-            for encoding, (top, right, bottom, left) in zip(face_encodings, face_locations):
-                matches = face_recognition.compare_faces(
-                    self.known_encodings, encoding, tolerance=DETECTION_CONFIG["face_tolerance"]
-                )
-                name = "Unknown Person"
-                if True in matches:
-                    best_idx = matches.index(True)
-                    name = self.known_names[best_idx]
+        if FACE_RECOGNITION_AVAILABLE and opencv_face_rec is not None:
+            try:
+                # Detect faces using OpenCV DNN
+                detected_faces = opencv_face_rec.detect_faces(frame)
                 
-                detected_people.append({
-                    'name': name,
-                    'bbox': [left, top, right, bottom],
-                    'confidence': 1.0,
-                    'face_encoding': encoding.tolist()  # Store encoding for unknown people
-                })
-                
-                # Handle unknown people (only if enabled)
-                if name == "Unknown Person" and DETECTION_CONFIG.get("detect_unknown_people", True):
-                    self._handle_unknown_person(frame, [left, top, right, bottom], encoding)
+                for face_data in detected_faces:
+                    bbox = face_data['bbox']
+                    confidence = face_data['confidence']
+                    
+                    # Recognize the face
+                    name, recognition_confidence = opencv_face_rec.recognize_face(frame, bbox)
+                    
+                    # Get face encoding for unknown person handling
+                    face_encoding = opencv_face_rec.get_face_encoding(frame, bbox)
+                    
+                    detected_people.append({
+                        'name': name,
+                        'bbox': [int(x) for x in bbox],  # Convert to regular int
+                        'confidence': float(confidence),
+                        'recognition_confidence': float(recognition_confidence),
+                        'face_encoding': face_encoding
+                    })
+                    
+                    # Add live detection event
+                    self._add_live_detection_event(name, confidence, recognition_confidence)
+                    
+                    # Handle unknown people (only if enabled and with additional checks)
+                    if (name == "Unknown Person" and 
+                        DETECTION_CONFIG.get("detect_unknown_people", True) and
+                        recognition_confidence < 50):  # Only log truly unknown people
+                        if face_encoding:
+                            self._handle_unknown_person(frame, bbox, face_encoding)
+                            
+            except Exception as e:
+                print(f"[WARNING] Face recognition error: {e}")
+                # Continue without face recognition if there's an error
         
         # PPE detection (only if enabled)
         detected_ppe = []
@@ -206,20 +284,30 @@ class PPEDetectionServer:
     
     def _handle_unknown_person(self, frame, bbox, face_encoding):
         """Handle detection of unknown person"""
+        if not FACE_RECOGNITION_AVAILABLE or opencv_face_rec is None:
+            return
+            
         # Check if this unknown person was recently detected (avoid duplicates)
         current_time = datetime.now()
         
         # Compare with recent unknown detections to avoid duplicates
         is_duplicate = False
-        cooldown_seconds = DETECTION_CONFIG.get("unknown_detection_cooldown", 30)
+        cooldown_seconds = DETECTION_CONFIG.get("unknown_detection_cooldown", 60)  # Increased cooldown
         for unknown in self.unknown_people:
-            if (current_time - datetime.fromisoformat(unknown['timestamp'])).seconds < cooldown_seconds:
-                # Compare face encodings to see if it's the same person
-                similarity = face_recognition.compare_faces([unknown['face_encoding']], face_encoding, tolerance=0.6)
-                if similarity[0]:
-                    is_duplicate = True
-                    unknown['last_seen'] = current_time.isoformat()
-                    break
+            try:
+                time_diff = (current_time - datetime.fromisoformat(unknown['timestamp'])).total_seconds()
+                if time_diff < cooldown_seconds:
+                    # Simple bbox-based comparison for faster duplicate detection
+                    old_bbox = unknown.get('bbox', [0, 0, 0, 0])
+                    # Check if faces are in similar location (within 50 pixels)
+                    if (abs(bbox[0] - old_bbox[0]) < 50 and 
+                        abs(bbox[1] - old_bbox[1]) < 50):
+                        is_duplicate = True
+                        unknown['last_seen'] = current_time.isoformat()
+                        break
+            except Exception as e:
+                print(f"[WARNING] Error in duplicate detection: {e}")
+                continue
         
         if not is_duplicate:
             # Extract face image
@@ -245,8 +333,8 @@ class PPEDetectionServer:
                 'filepath': filepath,
                 'timestamp': current_time.isoformat(),
                 'last_seen': current_time.isoformat(),
-                'face_encoding': face_encoding.tolist(),
-                'bbox': bbox,
+                'face_encoding': face_encoding if isinstance(face_encoding, list) else face_encoding,
+                'bbox': [int(x) for x in bbox] if bbox else [0, 0, 0, 0],  # Ensure int conversion
                 'added_to_database': False
             }
             
@@ -390,6 +478,35 @@ class PPEDetectionServer:
         
         return frame
     
+    def _add_live_detection_event(self, name, detection_confidence, recognition_confidence):
+        """Add a live detection event"""
+        current_time = datetime.now()
+        
+        # Check if this person was detected recently (within 5 seconds) to avoid spam
+        for event in reversed(self.live_detection_events[-10:]):
+            try:
+                event_time = datetime.fromisoformat(event['timestamp'])
+                if (current_time - event_time).total_seconds() < 5 and event['name'] == name:
+                    return  # Skip if same person detected recently
+            except:
+                continue
+        
+        event = {
+            'id': f"event_{int(current_time.timestamp())}_{len(self.live_detection_events)}",
+            'timestamp': current_time.isoformat(),
+            'time_display': current_time.strftime("%H:%M:%S"),
+            'name': name,
+            'detection_confidence': float(detection_confidence),
+            'recognition_confidence': float(recognition_confidence),
+            'event_type': 'face_detection'
+        }
+        
+        self.live_detection_events.append(event)
+        
+        # Keep only last 100 events to prevent memory buildup
+        if len(self.live_detection_events) > 100:
+            self.live_detection_events = self.live_detection_events[-50:]
+    
     def _log_detection(self, people, compliance):
         """Log detection to CSV"""
         log_file = os.path.join(self.output_dir, PATHS["log_filename"])
@@ -427,15 +544,44 @@ class PPEDetectionServer:
         self.processing_thread.daemon = True
         self.processing_thread.start()
         
-        print("[INFO] PPE Detection System started")
+        print("[INFO] S-Oasis System started")
         return True
     
     def stop(self):
         """Stop the detection system"""
         self.running = False
         self.system_stats['connection_status'] = 'Disconnected'
-        print("[INFO] PPE Detection System stopped")
+        print("[INFO] S-Oasis System stopped")
     
+    def switch_camera(self, camera_id):
+        """Switch to a different camera"""
+        # Check if camera is available
+        camera_found = None
+        for cam in self.available_cameras:
+            if cam['id'] == camera_id:
+                camera_found = cam
+                break
+        
+        if not camera_found:
+            return {"success": False, "error": f"Camera {camera_id} not found"}
+        
+        # Stop current capture if running
+        was_running = self.running
+        if was_running:
+            self.stop()
+            time.sleep(1)  # Give time for threads to stop
+        
+        # Switch camera
+        self.current_camera_type = camera_id
+        print(f"[INFO] Switched to camera: {camera_found['name']}")
+        
+        # Restart if it was running
+        if was_running:
+            success = self.start()
+            return {"success": success, "message": f"Switched to {camera_found['name']} and restarted"}
+        
+        return {"success": True, "message": f"Switched to {camera_found['name']}"}
+
     def control_camera(self, action, params):
         """Control camera PTZ functions"""
         if not self.onvif_camera or not self.profile_token:
@@ -513,7 +659,7 @@ class PPEDetectionServer:
             return {'success': False, 'message': f'Camera control failed: {str(e)}'}
 
 # Initialize detection system
-detection_system = PPEDetectionServer()
+server = SOasisServer()
 
 # Flask routes
 @app.route('/')
@@ -523,20 +669,46 @@ def index():
 @app.route('/api/status')
 def get_status():
     return jsonify({
-        'running': detection_system.running,
-        'stats': detection_system.system_stats,
-        'detections': detection_system.detection_results
+        'running': server.running,
+        'stats': server.system_stats,
+        'detections': server.detection_results
     })
 
 @app.route('/api/start', methods=['POST'])
 def start_detection():
-    success = detection_system.start()
+    success = server.start()
     return jsonify({'success': success, 'message': 'System started' if success else 'System already running'})
 
 @app.route('/api/stop', methods=['POST'])
 def stop_detection():
-    detection_system.stop()
+    server.stop()
     return jsonify({'success': True, 'message': 'System stopped'})
+
+@app.route('/api/cameras')
+def get_cameras():
+    """Get available cameras"""
+    return jsonify({
+        'success': True,
+        'cameras': server.available_cameras,
+        'current_camera': server.current_camera_type
+    })
+
+@app.route('/api/camera/switch', methods=['POST'])
+def switch_camera():
+    """Switch camera endpoint"""
+    try:
+        data = request.json
+        camera_id = data.get('camera_id')
+        
+        if not camera_id:
+            return jsonify({'success': False, 'message': 'Camera ID required'}), 400
+            
+        result = server.switch_camera(camera_id)
+        return jsonify(result)
+        
+    except Exception as e:
+        print(f"[ERROR] Camera switch API error: {e}")
+        return jsonify({'success': False, 'message': str(e)}), 500
 
 @app.route('/api/camera/control', methods=['POST'])
 def control_camera():
@@ -549,7 +721,7 @@ def control_camera():
         if not action:
             return jsonify({'success': False, 'message': 'Action required'}), 400
             
-        result = detection_system.control_camera(action, params)
+        result = server.control_camera(action, params)
         return jsonify(result)
         
     except Exception as e:
@@ -720,7 +892,7 @@ if __name__ == "__main__":
 
 @app.route('/api/logs')
 def get_logs():
-    log_file = os.path.join(detection_system.output_dir, PATHS["log_filename"])
+    log_file = os.path.join(server.output_dir, PATHS["log_filename"])
     logs = []
     
     if os.path.exists(log_file):
@@ -730,11 +902,31 @@ def get_logs():
     
     return jsonify(logs)
 
+@app.route('/api/logs/clear', methods=['DELETE'])
+def clear_logs():
+    """Clear all detection logs"""
+    try:
+        log_file = os.path.join(server.output_dir, PATHS["log_filename"])
+        if os.path.exists(log_file):
+            os.remove(log_file)
+        
+        # Also clear live detection events
+        server.live_detection_events = []
+        
+        return jsonify({'success': True, 'message': 'Logs cleared successfully'})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/logs/live')
+def get_live_logs():
+    """Get recent live detection events"""
+    return jsonify(server.live_detection_events[-30:])  # Return last 30 events
+
 @app.route('/api/unknown-people')
 def get_unknown_people():
     """Get list of detected unknown people"""
     unknown_list = []
-    for person in detection_system.unknown_people:
+    for person in server.unknown_people:
         # Create web-accessible image data
         try:
             with open(person['filepath'], 'rb') as f:
@@ -754,17 +946,18 @@ def get_unknown_people():
 
 @app.route('/api/add-person', methods=['POST'])
 def add_person_to_database():
-    """Add unknown person to the known employees database"""
+    """Add unknown person to the known employees database or link to existing person"""
     data = request.json
     unknown_id = data.get('unknown_id')
     person_name = data.get('name', '').strip()
+    action_type = data.get('action', 'new')  # 'new' or 'existing'
     
     if not unknown_id or not person_name:
         return jsonify({'success': False, 'message': 'Missing unknown_id or name'}), 400
     
     # Find the unknown person
     unknown_person = None
-    for person in detection_system.unknown_people:
+    for person in server.unknown_people:
         if person['id'] == unknown_id:
             unknown_person = person
             break
@@ -773,48 +966,372 @@ def add_person_to_database():
         return jsonify({'success': False, 'message': 'Unknown person not found'}), 404
     
     try:
-        # Create new employee image file
         dataset_dir = PATHS["employee_faces"]
-        new_filename = f"{person_name}.jpg"
-        new_filepath = os.path.join(dataset_dir, new_filename)
+        
+        if action_type == 'existing':
+            # Link to existing person - add as additional training image
+            existing_count = 0
+            for filename in os.listdir(dataset_dir):
+                if filename.startswith(f"{person_name}_") or filename == f"{person_name}.jpg":
+                    existing_count += 1
+            
+            new_filename = f"{person_name}_{existing_count + 1}.jpg"
+            new_filepath = os.path.join(dataset_dir, new_filename)
+            
+            print(f"[INFO] Adding additional training image for existing person: {person_name}")
+        else:
+            # Create new person
+            new_filename = f"{person_name}.jpg"
+            new_filepath = os.path.join(dataset_dir, new_filename)
+            
+            print(f"[INFO] Creating new person: {person_name}")
         
         # Copy image to dataset directory
         import shutil
         shutil.copy2(unknown_person['filepath'], new_filepath)
         
-        # Add face encoding to known faces
-        face_encoding = np.array(unknown_person['face_encoding'])
-        detection_system.known_encodings.append(face_encoding)
-        detection_system.known_names.append(person_name)
+        # Reload face recognition to include the new image
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            server.face_recognition.load_known_faces(dataset_dir)
+            print(f"[INFO] Face recognition model retrained with new image")
         
         # Mark as added to database
         unknown_person['added_to_database'] = True
         unknown_person['assigned_name'] = person_name
+        unknown_person['action_type'] = action_type
         
-        print(f"[INFO] Added {person_name} to employee database")
+        message = f'Successfully added additional training image for {person_name}' if action_type == 'existing' else f'Successfully added {person_name} to employee database'
         
         return jsonify({
             'success': True, 
-            'message': f'Successfully added {person_name} to employee database'
+            'message': message
         })
         
     except Exception as e:
         print(f"[ERROR] Failed to add person {person_name}: {e}")
         return jsonify({'success': False, 'message': f'Failed to add person: {str(e)}'}), 500
 
+@app.route('/api/known-people')
+def get_known_people():
+    """Get list of known people for linking unknown detections"""
+    try:
+        known_people = []
+        
+        # Check multiple sources for known people
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            if hasattr(server.face_recognition, 'known_names') and server.face_recognition.known_names:
+                known_people = list(set(server.face_recognition.known_names))  # Remove duplicates
+            elif hasattr(server.face_recognition, 'person_to_label') and server.face_recognition.person_to_label:
+                known_people = list(server.face_recognition.person_to_label.keys())
+        
+        # Fallback: scan dataset directory for known people
+        if not known_people:
+            import os
+            dataset_dir = PATHS["employee_faces"]
+            if os.path.exists(dataset_dir):
+                for filename in os.listdir(dataset_dir):
+                    if filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                        base_name = os.path.splitext(filename)[0]
+                        if '_' in base_name and base_name.split('_')[-1].isdigit():
+                            person_name = '_'.join(base_name.split('_')[:-1])
+                        else:
+                            person_name = base_name
+                        
+                        if person_name not in known_people:
+                            known_people.append(person_name)
+        
+        print(f"[INFO] Found {len(known_people)} known people: {known_people}")
+        
+        return jsonify({
+            'success': True,
+            'people': sorted(known_people)  # Sort alphabetically
+        })
+    except Exception as e:
+        print(f"[ERROR] Failed to get known people: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/add-person-direct', methods=['POST'])
+def add_person_direct():
+    """Add a new person directly with uploaded image"""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'message': 'No image provided'}), 400
+        
+        file = request.files['image']
+        person_name = request.form.get('name', '').strip()
+        
+        if not person_name:
+            return jsonify({'success': False, 'message': 'Person name is required'}), 400
+        
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No image selected'}), 400
+        
+        # Check if person already exists
+        dataset_dir = PATHS["employee_faces"]
+        existing_files = []
+        if os.path.exists(dataset_dir):
+            for filename in os.listdir(dataset_dir):
+                if filename.startswith(person_name) and filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    existing_files.append(filename)
+        
+        if existing_files:
+            return jsonify({
+                'success': False, 
+                'message': f'Person "{person_name}" already exists. Use "Add Training Image" to add more photos.'
+            }), 400
+        
+        # Validate file type
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({
+                'success': False, 
+                'message': 'Invalid file type. Please use JPG, PNG, or BMP images.'
+            }), 400
+        
+        # Create dataset directory if it doesn't exist
+        os.makedirs(dataset_dir, exist_ok=True)
+        
+        # Save the image
+        filename = f"{person_name}.jpg"
+        filepath = os.path.join(dataset_dir, filename)
+        
+        # Convert uploaded file to OpenCV format for face detection
+        import cv2
+        import numpy as np
+        
+        # Read image data
+        file_data = file.read()
+        np_array = np.frombuffer(file_data, np.uint8)
+        image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({'success': False, 'message': 'Invalid image format'}), 400
+        
+        # Check if there's a face in the image
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            faces = server.face_recognition.detect_faces(image)
+            if not faces:
+                return jsonify({
+                    'success': False, 
+                    'message': 'No face detected in the image. Please use a clear photo with a visible face.'
+                }), 400
+        
+        # Save the processed image
+        cv2.imwrite(filepath, image)
+        
+        # Reload face recognition model to include the new person
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            server.face_recognition.load_known_faces(dataset_dir)
+            print(f"[INFO] Face recognition model retrained with new person: {person_name}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully added {person_name} to the database'
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to add person directly: {e}")
+        return jsonify({'success': False, 'message': f'Failed to add person: {str(e)}'}), 500
+
+@app.route('/api/add-training-image', methods=['POST'])
+def add_training_image():
+    """Add additional training image for an existing person"""
+    try:
+        if 'image' not in request.files:
+            return jsonify({'success': False, 'message': 'No image provided'}), 400
+        
+        file = request.files['image']
+        person_name = request.form.get('name', '').strip()
+        
+        if not person_name:
+            return jsonify({'success': False, 'message': 'Person name is required'}), 400
+        
+        if file.filename == '':
+            return jsonify({'success': False, 'message': 'No image selected'}), 400
+        
+        # Check if person exists
+        dataset_dir = PATHS["employee_faces"]
+        person_exists = False
+        if os.path.exists(dataset_dir):
+            for filename in os.listdir(dataset_dir):
+                if filename.startswith(person_name) and filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    person_exists = True
+                    break
+        
+        if not person_exists:
+            return jsonify({
+                'success': False,
+                'message': f'Person "{person_name}" not found. Add them as a new person first.'
+            }), 400
+        
+        # Count existing images for this person
+        existing_count = 0
+        for filename in os.listdir(dataset_dir):
+            if filename.startswith(f"{person_name}_") or filename == f"{person_name}.jpg":
+                existing_count += 1
+        
+        # Validate file type
+        allowed_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+        file_ext = os.path.splitext(file.filename)[1].lower()
+        if file_ext not in allowed_extensions:
+            return jsonify({
+                'success': False,
+                'message': 'Invalid file type. Please use JPG, PNG, or BMP images.'
+            }), 400
+        
+        # Process and save the image
+        import cv2
+        import numpy as np
+        
+        file_data = file.read()
+        np_array = np.frombuffer(file_data, np.uint8)
+        image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+        
+        if image is None:
+            return jsonify({'success': False, 'message': 'Invalid image format'}), 400
+        
+        # Check for face
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            faces = server.face_recognition.detect_faces(image)
+            if not faces:
+                return jsonify({
+                    'success': False,
+                    'message': 'No face detected in the image. Please use a clear photo with a visible face.'
+                }), 400
+        
+        # Save with incremented filename
+        filename = f"{person_name}_{existing_count + 1}.jpg"
+        filepath = os.path.join(dataset_dir, filename)
+        cv2.imwrite(filepath, image)
+        
+        # Retrain model
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            server.face_recognition.load_known_faces(dataset_dir)
+            print(f"[INFO] Added training image {existing_count + 1} for {person_name}")
+        
+        return jsonify({
+            'success': True,
+            'message': f'Successfully added training image #{existing_count + 1} for {person_name}'
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to add training image: {e}")
+        return jsonify({'success': False, 'message': f'Failed to add training image: {str(e)}'}), 500
+
+@app.route('/api/add-multiple-training-images', methods=['POST'])
+def add_multiple_training_images():
+    """Add multiple training images from camera capture"""
+    try:
+        person_name = request.form.get('name', '').strip()
+        
+        if not person_name:
+            return jsonify({'success': False, 'message': 'Person name is required'}), 400
+        
+        # Get all uploaded files
+        uploaded_files = []
+        for key in request.files:
+            if key.startswith('image_'):
+                uploaded_files.append(request.files[key])
+        
+        if not uploaded_files:
+            return jsonify({'success': False, 'message': 'No images provided'}), 400
+        
+        dataset_dir = PATHS["employee_faces"]
+        os.makedirs(dataset_dir, exist_ok=True)
+        
+        # Check if person exists (for training images) or doesn't exist (for new person)
+        person_exists = False
+        existing_count = 0
+        if os.path.exists(dataset_dir):
+            for filename in os.listdir(dataset_dir):
+                if filename.startswith(person_name) and filename.lower().endswith(('.jpg', '.jpeg', '.png')):
+                    person_exists = True
+                    if filename.startswith(f"{person_name}_") or filename == f"{person_name}.jpg":
+                        existing_count += 1
+        
+        import cv2
+        import numpy as np
+        
+        saved_images = []
+        
+        for i, file in enumerate(uploaded_files):
+            if file.filename == '':
+                continue
+                
+            # Validate file type
+            allowed_extensions = {'.jpg', '.jpeg', '.png', '.bmp'}
+            file_ext = os.path.splitext(file.filename)[1].lower()
+            if file_ext not in allowed_extensions:
+                continue
+            
+            # Process image
+            file_data = file.read()
+            np_array = np.frombuffer(file_data, np.uint8)
+            image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
+            
+            if image is None:
+                continue
+            
+            # Check for face
+            if hasattr(server, 'face_recognition') and server.face_recognition:
+                faces = server.face_recognition.detect_faces(image)
+                if not faces:
+                    continue
+            
+            # Determine filename
+            if i == 0 and not person_exists:
+                # First image for new person
+                filename = f"{person_name}.jpg"
+            else:
+                # Additional training images
+                filename = f"{person_name}_{existing_count + len(saved_images) + 1}.jpg"
+            
+            filepath = os.path.join(dataset_dir, filename)
+            cv2.imwrite(filepath, image)
+            saved_images.append(filename)
+        
+        if not saved_images:
+            return jsonify({
+                'success': False,
+                'message': 'No valid images with faces could be processed'
+            }), 400
+        
+        # Retrain model
+        if hasattr(server, 'face_recognition') and server.face_recognition:
+            server.face_recognition.load_known_faces(dataset_dir)
+            if person_exists:
+                print(f"[INFO] Added {len(saved_images)} training images for {person_name}")
+            else:
+                print(f"[INFO] Added new person {person_name} with {len(saved_images)} training images")
+        
+        message = f'Successfully added {len(saved_images)} training images for {person_name}'
+        if not person_exists:
+            message = f'Successfully added {person_name} with {len(saved_images)} training images'
+        
+        return jsonify({
+            'success': True,
+            'message': message,
+            'images_saved': len(saved_images)
+        })
+        
+    except Exception as e:
+        print(f"[ERROR] Failed to add multiple training images: {e}")
+        return jsonify({'success': False, 'message': f'Failed to add images: {str(e)}'}), 500
+
 @app.route('/api/dismiss-unknown/<unknown_id>', methods=['DELETE'])
 def dismiss_unknown_person(unknown_id):
     """Dismiss/remove an unknown person detection"""
     try:
         # Find and remove the unknown person
-        for i, person in enumerate(detection_system.unknown_people):
+        for i, person in enumerate(server.unknown_people):
             if person['id'] == unknown_id:
                 # Remove image file
                 if os.path.exists(person['filepath']):
                     os.remove(person['filepath'])
                 
                 # Remove from list
-                detection_system.unknown_people.pop(i)
+                server.unknown_people.pop(i)
                 
                 return jsonify({'success': True, 'message': 'Unknown person dismissed'})
         
@@ -827,7 +1344,7 @@ def dismiss_unknown_person(unknown_id):
 @app.route('/api/unknown-people/image/<unknown_id>')
 def get_unknown_person_image(unknown_id):
     """Serve unknown person image"""
-    for person in detection_system.unknown_people:
+    for person in server.unknown_people:
         if person['id'] == unknown_id:
             try:
                 return send_file(person['filepath'], mimetype='image/jpeg')
@@ -841,8 +1358,8 @@ def get_unknown_person_image(unknown_id):
 def handle_connect():
     print(f"[INFO] Client connected: {request.sid}")
     emit('status_update', {
-        'running': detection_system.running,
-        'stats': detection_system.system_stats
+        'running': server.running,
+        'stats': server.system_stats
     })
 
 @socketio.on('disconnect')
@@ -850,7 +1367,7 @@ def handle_disconnect():
     print(f"[INFO] Client disconnected: {request.sid}")
 
 if __name__ == '__main__':
-    print("PPE Detection Web Server")
+    print("S-Oasis Web Server")
     print("=" * 40)
     print("Access the dashboard at: http://localhost:8080")
     print("=" * 40)

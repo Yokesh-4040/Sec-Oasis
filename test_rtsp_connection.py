@@ -167,7 +167,7 @@ def main():
     # Test RTSP connection
     if test_rtsp_connection():
         print(f"\n[SUCCESS] All tests passed!")
-        print(f"[INFO] Your camera is ready for live PPE detection")
+        print(f"[INFO] Your camera is ready for S-Oasis live monitoring")
         print(f"[INFO] Run 'python detect_ppe_live_stream.py' to start detection")
     else:
         print(f"\n[ERROR] RTSP connection test failed!")
